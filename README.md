@@ -38,7 +38,7 @@ Each game folder is fully self-contained — its own HTML, JS, service worker, a
 ## Getting started
 
 1. **Supabase setup** — required for TI4 and any future games that sync across devices. Run `ti4/supabase-setup.sql` in your Supabase project's SQL editor. This creates the database schema (TI4 tables + the cross-game stats log).
-2. **Open the app** — visit your hosted URL (for example `https://yourname.github.io/bg-assistant/`). You'll land on the front page. Tap **Twilight Imperium IV → Companion** to enter the TI4 app, then paste your Supabase URL + anon key in the settings screen.
+2. **Open the app** — visit [https://luphold.github.io/bg-assistant/](https://luphold.github.io/bg-assistant/). You'll land on the front page. Tap **Twilight Imperium IV → Companion** to enter the TI4 app, then paste your Supabase URL + anon key in the settings screen.
 3. **Username** — set once on the front page. Stored in `localStorage` under the key `bg_username`. All sub-apps read it, so you only enter it once.
 
 ---
