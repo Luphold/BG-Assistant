@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v1.4.1 - compact status in header -->
+<!-- Board Game Assistant v1.5 - persistent logs, local snapshots, loud sync failure alerts -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -497,7 +497,7 @@
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v1.4.1</div>
+      <div class="version">v1.5.0</div>
     </div>
     
   </div>
@@ -581,8 +581,23 @@
       inp.focus();
     }, true); // capture phase so we run before the element's own click handlers
     
-    // ===== IndexedDB (shared with TI4 — same origin, same store) =====
+    // ===== IndexedDB (shared with TI4 — same DB name, same store) =====
     function openDB() {
+      return new Promise(function(resolve, reject) {
+        // Use 'ti4' DB to match TI4 app — this is where Supabase URL/key/username live
+        var req = indexedDB.open('ti4', 1);
+        req.onupgradeneeded = function(e) {
+          var d = e.target.result;
+          if (!d.objectStoreNames.contains('settings')) d.createObjectStore('settings', { keyPath: 'k' });
+          if (!d.objectStoreNames.contains('history'))  d.createObjectStore('history', { keyPath: 'id', autoIncrement: true });
+        };
+        req.onsuccess = function(e) { resolve(e.target.result); };
+        req.onerror = function() { reject(); };
+      });
+    }
+    // Legacy fallback: if 'ti4' DB has nothing but 'ti4tracker' does (from earlier front-page setting),
+    // read from 'ti4tracker' as a backup and migrate over.
+    function openLegacyDB() {
       return new Promise(function(resolve, reject) {
         var req = indexedDB.open('ti4tracker', 3);
         req.onupgradeneeded = function(e) {
@@ -594,21 +609,40 @@
         req.onerror = function() { reject(); };
       });
     }
-    function dbGet(store, key) {
-      return openDB().then(function(d) {
-        return new Promise(function(resolve) {
-          var r = d.transaction(store).objectStore(store).get(key);
+    function _dbGetRaw(dbHandle, store, key) {
+      return new Promise(function(resolve) {
+        try {
+          var r = dbHandle.transaction(store).objectStore(store).get(key);
           r.onsuccess = function() { resolve(r.result); };
           r.onerror = function() { resolve(null); };
+        } catch (e) { resolve(null); }
+      });
+    }
+    function dbGet(store, key) {
+      return openDB().then(function(d) {
+        return _dbGetRaw(d, store, key).then(function(rec) {
+          if (rec !== undefined && rec !== null) return rec;
+          // Fall back to the legacy 'ti4tracker' DB and migrate if found
+          return openLegacyDB().then(function(d2) {
+            return _dbGetRaw(d2, store, key).then(function(legacyRec) {
+              if (legacyRec) {
+                // Migrate the value into the new DB so we only need this on first access
+                dbSet(store, legacyRec).catch(function(){});
+              }
+              return legacyRec;
+            });
+          }).catch(function() { return null; });
         });
       });
     }
     function dbSet(store, rec) {
       return openDB().then(function(d) {
-        return new Promise(function(resolve) {
-          var r = d.transaction(store, 'readwrite').objectStore(store).put(rec);
-          r.onsuccess = function() { resolve(); };
-          r.onerror = function() { resolve(); };
+        return new Promise(function(resolve, reject) {
+          try {
+            var r = d.transaction(store, 'readwrite').objectStore(store).put(rec);
+            r.onsuccess = function() { resolve(true); };
+            r.onerror = function() { resolve(false); };
+          } catch (e) { resolve(false); }
         });
       });
     }

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.133 -->
+<!-- TI4 Tracker 2.134 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -202,6 +202,12 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   </div>
 </div>
 
+<!-- Sync failure banner (sticky, shows when pushes fail repeatedly) -->
+<div id="sync-warning" style="display:none;position:fixed;top:0;left:0;right:0;z-index:200;background:rgba(231, 76, 60, 0.95);color:white;padding:10px 14px;text-align:center;font-size:13px;font-weight:600;letter-spacing:.04em;box-shadow:0 2px 12px rgba(231, 76, 60, 0.5)">
+  ⚠ Cannot sync to Supabase. Your game is not being saved to the cloud.
+  <span style="display:block;font-size:11px;font-weight:400;margin-top:2px;opacity:0.9">Local backup is being saved every 60s — you can restore from it after reconnecting.</span>
+</div>
+
 <!-- Status bar (shown in game) -->
 <div id="status-bar" class="status-bar" style="position:sticky;top:0">
   <div style="display:flex;align-items:center;gap:6px;flex:1;z-index:1">
@@ -341,26 +347,94 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.133';
+var VERSION = '2.134';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
 var logBuffer = [];
+var _logPersistQueue = [];
+var _logPersistTimer = null;
 function log(msg) {
   console.log('[ti4]', msg);
   var ts = new Date().toLocaleTimeString();
-  logBuffer.unshift(ts + ' ' + msg);
-  if (logBuffer.length > 50) logBuffer.pop();
+  var line = ts + ' ' + msg;
+  logBuffer.unshift(line);
+  if (logBuffer.length > 200) logBuffer.pop();
   var el = document.getElementById('log');
   if (el && el.classList.contains('open')) {
     el.innerHTML = logBuffer.join('<br>');
   }
+  // Queue for persistent storage (batched to avoid hammering IndexedDB)
+  _logPersistQueue.push({ ts: new Date().toISOString(), msg: msg, page: 'ti4' });
+  if (!_logPersistTimer) {
+    _logPersistTimer = setTimeout(flushLogQueue, 1000);
+  }
 }
+function flushLogQueue() {
+  _logPersistTimer = null;
+  var batch = _logPersistQueue.splice(0);
+  if (!batch.length) return;
+  openDB().then(function(d) {
+    try {
+      var store = d.transaction('logs', 'readwrite').objectStore('logs');
+      batch.forEach(function(entry) { store.add(entry); });
+      // Trim to last 200 rows
+      var countReq = store.count();
+      countReq.onsuccess = function() {
+        var total = countReq.result;
+        if (total > 200) {
+          var excess = total - 200;
+          var cursorReq = store.openCursor();
+          var removed = 0;
+          cursorReq.onsuccess = function(e) {
+            var cur = e.target.result;
+            if (cur && removed < excess) {
+              cur.delete();
+              removed += 1;
+              cur.continue();
+            }
+          };
+        }
+      };
+    } catch (e) {
+      // logs store may not exist yet on older DB; ignore
+    }
+  }).catch(function(){});
+}
+function downloadLogs() {
+  openDB().then(function(d) {
+    try {
+      var req = d.transaction('logs').objectStore('logs').getAll();
+      req.onsuccess = function() {
+        var rows = req.result || [];
+        var lines = rows.map(function(r) {
+          return r.ts + ' [' + (r.page || 'ti4') + '] ' + r.msg;
+        }).join('\n');
+        var blob = new Blob([lines], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'bg-assistant-logs-' + new Date().toISOString().replace(/[:.]/g, '-') + '.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+    } catch (e) {
+      alert('Could not export logs: ' + e.message);
+    }
+  });
+}
+window.downloadLogs = downloadLogs;
 function toggleLog() {
   var el = document.getElementById('log');
   if (!el) return;
   el.classList.toggle('open');
-  if (el.classList.contains('open')) el.innerHTML = logBuffer.join('<br>');
+  if (el.classList.contains('open')) {
+    var content = logBuffer.join('<br>');
+    content += '<br><br><button onclick="downloadLogs()" style="background:var(--gold);color:#000;border:none;padding:6px 10px;border-radius:4px;font-weight:600;cursor:pointer;font-size:11px">📥 Download last 200 logs</button>';
+    el.innerHTML = content;
+  }
 }
 window.toggleLog = toggleLog;
 window.onerror = function(msg, src, line, col, err) {
@@ -1572,11 +1646,12 @@ var db = null;
 function openDB() {
   return new Promise(function(resolve, reject) {
     if (db) { resolve(db); return; }
-    var req = indexedDB.open('ti4', 1);
+    var req = indexedDB.open('ti4', 2);
     req.onupgradeneeded = function(e) {
       var d = e.target.result;
       if (!d.objectStoreNames.contains('settings')) d.createObjectStore('settings', { keyPath: 'k' });
       if (!d.objectStoreNames.contains('history')) d.createObjectStore('history', { keyPath: 'id', autoIncrement: true });
+      if (!d.objectStoreNames.contains('logs')) d.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
     };
     req.onsuccess = function(e) { db = e.target.result; resolve(db); };
     req.onerror = function() { reject(req.error); };
@@ -1673,11 +1748,38 @@ function pushState() {
       state: state,
       updated_at: new Date().toISOString()
     }, { onConflict: 'room_code' }).then(function(r) {
-      if (r.error) log('Push error: ' + r.error.message);
-      else log('Pushed state OK');
+      if (r.error) { log('Push error: ' + r.error.message); noteSyncFailure('Push error: ' + r.error.message); }
+      else { log('Pushed state OK'); noteSyncSuccess(); }
       return r;
+    }).catch(function(err) {
+      log('Push exception: ' + (err && err.message ? err.message : 'unknown'));
+      noteSyncFailure('Push exception: ' + (err && err.message ? err.message : 'unknown'));
+      return { error: err };
     });
+  }).catch(function(err) {
+    log('Push fetch exception: ' + (err && err.message ? err.message : 'unknown'));
+    noteSyncFailure('Push fetch exception');
+    return { error: err };
   });
+}
+
+// Track consecutive push failures and show a warning banner after 2 in a row
+var _consecutiveSyncFailures = 0;
+function noteSyncFailure(reason) {
+  _consecutiveSyncFailures += 1;
+  if (_consecutiveSyncFailures >= 2) {
+    var banner = document.getElementById('sync-warning');
+    if (banner) banner.style.display = '';
+    setConnDotStatus('error');
+  }
+}
+function noteSyncSuccess() {
+  if (_consecutiveSyncFailures > 0) {
+    _consecutiveSyncFailures = 0;
+    var banner = document.getElementById('sync-warning');
+    if (banner) banner.style.display = 'none';
+    setConnDotStatus('ok');
+  }
 }
 
 // Guest-safe push: fetch current state, merge in new claims, push back. Prevents racing the admin's edits.
@@ -1752,6 +1854,39 @@ function startSupabasePing() {
   if (_supaPingInterval) return; // already running
   pingSupabase();
   _supaPingInterval = setInterval(pingSupabase, 30000);
+}
+
+// =============================================================================
+// LOCAL SNAPSHOT (safety net — survives Supabase outages and tab refreshes)
+// =============================================================================
+var _snapshotInterval = null;
+function saveLocalSnapshot() {
+  if (!isAdmin || !roomCode || !state || !state.started || state.ended) return;
+  var snapshot = {
+    k: 'snapshot',
+    v: {
+      roomCode: roomCode,
+      state: state,
+      savedAt: new Date().toISOString()
+    }
+  };
+  dbSet('settings', snapshot).then(function() {
+    log('Local snapshot saved');
+  }).catch(function() {});
+}
+function loadLocalSnapshot() {
+  return dbGet('settings', 'snapshot').then(function(rec) {
+    if (!rec || !rec.v) return null;
+    return rec.v;
+  });
+}
+function clearLocalSnapshot() {
+  return dbSet('settings', { k: 'snapshot', v: null });
+}
+function startSnapshotTimer() {
+  if (_snapshotInterval) return;
+  _snapshotInterval = setInterval(saveLocalSnapshot, 60000);
+  log('Local snapshot timer started (60s)');
 }
 
 function startPolling() {
@@ -4645,6 +4780,8 @@ function endGame(winnerName) {
   state.ended = true;
   state.winner = winnerName;
   state.endTime = new Date().toISOString();
+  // Game ended cleanly — clear the local snapshot since history now has the data
+  clearLocalSnapshot();
   // Save to history (only if game lasted more than 2 rounds)
   if (state.round > 2) {
     // Load photos from cache and bundle into history
@@ -5259,6 +5396,7 @@ function enterGame(code) {
   // conn-dot health is managed by pingSupabase() (started below)
   startMessagePolling();
   startSupabasePing();
+  if (isAdmin) startSnapshotTimer();
   dbGet('settings', 'claim:' + roomCode).then(function(rec) {
     if (rec && typeof rec.v === 'number' && rec.v >= 0) {
       myClaimedSlot = rec.v;
@@ -5502,7 +5640,7 @@ function clearCache() {
 // =============================================================================
 document.getElementById('btn-reset').addEventListener('click', clearCache);
 document.getElementById('btn-admin').addEventListener('click', enterAsAdmin);
-document.getElementById('btn-resume-admin').addEventListener('click', resumeAsAdmin);
+// btn-resume-admin's onclick is set dynamically by checkResumableGame() based on what resume sources exist
 document.getElementById('btn-guest-join').addEventListener('click', enterAsGuestFromUrl);
 document.getElementById('btn-howto').addEventListener('click', showHowTo);
 document.getElementById('btn-join').addEventListener('click', joinGame);
@@ -5798,24 +5936,143 @@ function init() {
   });
 }
 
+// Resume options come from two sources:
+//   - Remote: Supabase row for the last room code
+//   - Local:  Local snapshot saved every 60s during admin gameplay
+// We store both as window._remoteResume and window._localResume, and the resume
+// button on the admin chooser triggers a flow that picks one (or shows conflict UI).
 function checkResumableGame() {
-  return dbGet('settings', 'lastRoom').then(function(rec) {
-    var savedCode = rec && rec.v;
-    if (!savedCode || !supabase) return;
-    return supabase.from('ti4_rooms').select('state').eq('room_code', savedCode).maybeSingle().then(function(r) {
-      if (r.error || !r.data) return;
-      var s = r.data.state;
-      // Only offer resume for STARTED but not ENDED games
-      if (s && s.started && !s.ended) {
-        var btn = document.getElementById('btn-resume-admin');
-        if (btn) {
-          btn.style.display = '';
-          btn.textContent = '↺ Resume Game (Room: ' + savedCode + ')';
+  window._remoteResume = null;
+  window._localResume = null;
+  return Promise.all([
+    // Remote check
+    dbGet('settings', 'lastRoom').then(function(rec) {
+      var savedCode = rec && rec.v;
+      if (!savedCode || !supabase) return null;
+      return supabase.from('ti4_rooms').select('state, updated_at').eq('room_code', savedCode).maybeSingle().then(function(r) {
+        if (r.error || !r.data) return null;
+        var s = r.data.state;
+        if (s && s.started && !s.ended) {
+          return { source: 'remote', roomCode: savedCode, state: s, savedAt: r.data.updated_at };
         }
-      }
-    });
+        return null;
+      }).catch(function() { return null; });
+    }),
+    // Local check
+    loadLocalSnapshot().then(function(snap) {
+      if (!snap || !snap.state || !snap.state.started || snap.state.ended) return null;
+      return { source: 'local', roomCode: snap.roomCode, state: snap.state, savedAt: snap.savedAt };
+    }).catch(function() { return null; })
+  ]).then(function(results) {
+    window._remoteResume = results[0];
+    window._localResume = results[1];
+    var hasRemote = !!window._remoteResume;
+    var hasLocal = !!window._localResume;
+    if (!hasRemote && !hasLocal) return; // nothing to resume
+    
+    var btn = document.getElementById('btn-resume-admin');
+    if (!btn) return;
+    btn.style.display = '';
+    
+    if (hasRemote && hasLocal && window._remoteResume.roomCode === window._localResume.roomCode) {
+      // Same room in both — pick the newer one automatically (least confusing case)
+      var remoteAt = new Date(window._remoteResume.savedAt).getTime();
+      var localAt = new Date(window._localResume.savedAt).getTime();
+      var ageMins = Math.round(Math.max(remoteAt, localAt - 0) === 0 ? 0 : (Date.now() - Math.max(remoteAt, localAt)) / 60000);
+      btn.textContent = '↺ Resume (Room: ' + window._remoteResume.roomCode + ')';
+      btn.onclick = function() {
+        // No conflict — just resume from whichever has the newer state
+        var pick = (localAt > remoteAt) ? window._localResume : window._remoteResume;
+        log('Resume picking ' + pick.source + ' (newer)');
+        executeResume(pick);
+      };
+    } else if (hasRemote && hasLocal) {
+      // Different rooms — show conflict modal
+      btn.textContent = '↺ Resume Previous Game';
+      btn.onclick = openResumeConflictModal;
+    } else if (hasRemote) {
+      btn.textContent = '↺ Resume (Room: ' + window._remoteResume.roomCode + ')';
+      btn.onclick = function() { executeResume(window._remoteResume); };
+    } else if (hasLocal) {
+      btn.textContent = '↺ Restore local backup (Room: ' + window._localResume.roomCode + ')';
+      btn.onclick = function() { executeResume(window._localResume); };
+    }
   });
 }
+
+function summarizeState(s) {
+  if (!s || !s.players) return '';
+  var sorted = s.players.slice().sort(function(a,b){return b.vp - a.vp;});
+  var top = sorted[0];
+  return 'Round ' + (s.round || '?') + ' · ' + s.players.length + ' players · top: ' + (top ? top.name + ' ' + top.vp + 'VP' : 'n/a');
+}
+function formatRelative(iso) {
+  if (!iso) return '?';
+  var diff = Date.now() - new Date(iso).getTime();
+  var min = Math.floor(diff / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return min + ' min ago';
+  var h = Math.floor(min / 60);
+  if (h < 24) return h + ' h ago';
+  return Math.floor(h / 24) + ' days ago';
+}
+
+function openResumeConflictModal() {
+  var r = window._remoteResume;
+  var l = window._localResume;
+  var h = '<div style="text-align:center;margin-bottom:14px"><div style="font-size:32px">⚠</div><div class="gold" style="font-size:16px;letter-spacing:.08em;margin-top:4px">TWO ACTIVE GAMES FOUND</div><div class="small dim" style="margin-top:6px">A remote game on Supabase and a local backup don\'t match. Pick which one to continue. The other will be overwritten.</div></div>';
+  
+  // Remote card
+  h += '<div style="border:1px solid var(--border2);border-radius:8px;padding:12px;margin-bottom:10px;background:rgba(36,50,84,0.3)">';
+  h += '<div class="gold" style="font-size:12px;letter-spacing:.1em">☁ REMOTE (SUPABASE)</div>';
+  h += '<div style="margin-top:6px"><b>Room ' + r.roomCode + '</b> · saved ' + formatRelative(r.savedAt) + '</div>';
+  h += '<div class="small dim" style="margin-top:4px">' + summarizeState(r.state) + '</div>';
+  h += '<button class="btn btn-primary btn-full mt-8" onclick="executeResumePick(\'remote\')" style="padding:10px">Continue Remote</button>';
+  h += '</div>';
+  
+  // Local card
+  h += '<div style="border:1px solid var(--border2);border-radius:8px;padding:12px;margin-bottom:10px;background:rgba(36,50,84,0.3)">';
+  h += '<div class="gold" style="font-size:12px;letter-spacing:.1em">📱 LOCAL (THIS DEVICE)</div>';
+  h += '<div style="margin-top:6px"><b>Room ' + l.roomCode + '</b> · saved ' + formatRelative(l.savedAt) + '</div>';
+  h += '<div class="small dim" style="margin-top:4px">' + summarizeState(l.state) + '</div>';
+  h += '<button class="btn btn-primary btn-full mt-8" onclick="executeResumePick(\'local\')" style="padding:10px">Continue Local</button>';
+  h += '</div>';
+  
+  h += '<button class="btn btn-full mt-8" onclick="closeModal()">Cancel</button>';
+  
+  var modal = document.getElementById('modal');
+  modal.classList.add('modal-center');
+  modal.innerHTML = h;
+  modal.classList.add('open');
+  document.getElementById('modal-overlay').classList.add('open');
+}
+window.openResumeConflictModal = openResumeConflictModal;
+
+function executeResumePick(which) {
+  closeModal();
+  var pick = (which === 'local') ? window._localResume : window._remoteResume;
+  if (!pick) return;
+  executeResume(pick, true);
+}
+window.executeResumePick = executeResumePick;
+
+function executeResume(pick, forceOverwrite) {
+  log('Resuming from ' + pick.source + ' (room ' + pick.roomCode + ')');
+  captureUsername();
+  isAdmin = true;
+  roomCode = pick.roomCode;
+  state = pick.state;
+  dbSet('settings', { k: 'lastRoom', v: roomCode });
+  enterGame();
+  // If user chose local OR if we're overwriting, push our state to remote (overwrite the other side)
+  if (pick.source === 'local' || forceOverwrite) {
+    log('Pushing chosen state to Supabase (overwriting any remote)');
+    pushState();
+  }
+  // Save fresh local snapshot regardless
+  saveLocalSnapshot();
+}
+window.executeResume = executeResume;
 
 init();
 log('App loaded v' + VERSION);
