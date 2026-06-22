@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v1.3.3 - username required before any action -->
+<!-- Board Game Assistant v1.4 - Supabase status indicator on front and TI4 -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -263,6 +263,32 @@
       letter-spacing: .1em;
     }
     .footer .version { font-size: 10px; opacity: 0.6; margin-top: 4px; }
+    
+    /* Supabase status row */
+    .supa-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    .supa-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      display: inline-block;
+      flex: 0 0 10px;
+      transition: background 0.3s;
+    }
+    .supa-dot.ok { background: #2ecc71; box-shadow: 0 0 6px rgba(46, 204, 113, 0.6); }
+    .supa-dot.error { background: var(--red); box-shadow: 0 0 6px rgba(231, 76, 60, 0.6); }
+    #supa-text { color: var(--text-dim); flex: 1; }
+    #supa-text.ok { color: #2ecc71; }
+    #supa-text.error { color: var(--red); }
     .no-supabase {
       text-align: center;
       color: var(--text-dim);
@@ -437,13 +463,17 @@
     <button class="big-guest-btn" id="btn-guest">🎲 Join as Guest</button>
     
     <div class="section-h">Global Stats</div>
+    <div class="supa-status" id="supa-status">
+      <span class="supa-dot" id="supa-dot"></span>
+      <span id="supa-text">Checking Supabase…</span>
+    </div>
     <div class="stats-panel" id="stats-panel">
       <div class="stats-loading" id="stats-loading">Loading stats…</div>
     </div>
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v1.3.3</div>
+      <div class="version">v1.4.0</div>
     </div>
     
   </div>
@@ -880,6 +910,57 @@
     }
     initStats();
     window.openSettings = openSettings;  // expose for inline link click
+    
+    // ===== Supabase status checker (runs every 30s) =====
+    function setSupaStatus(state, msg) {
+      var dot = document.getElementById('supa-dot');
+      var txt = document.getElementById('supa-text');
+      dot.classList.remove('ok', 'error');
+      txt.classList.remove('ok', 'error');
+      if (state === 'ok') {
+        dot.classList.add('ok');
+        txt.classList.add('ok');
+      } else if (state === 'error') {
+        dot.classList.add('error');
+        txt.classList.add('error');
+      }
+      txt.textContent = msg;
+    }
+    
+    function pingSupabase() {
+      Promise.all([dbGet('settings', 'url'), dbGet('settings', 'key')]).then(function(results) {
+        var url = results[0] && results[0].v;
+        var key = results[1] && results[1].v;
+        if (!url || !key) {
+          setSupaStatus('error', '❌ Supabase not configured — open ⚙ Settings to set up');
+          return;
+        }
+        return loadSupabase(url, key).then(function(client) {
+          return client.from('bg_game_log').select('id').limit(1);
+        }).then(function(r) {
+          if (r.error) {
+            // Could be paused, table missing, or auth — report the message
+            var m = r.error.message || 'unknown error';
+            if (m.toLowerCase().indexOf('bg_game_log') >= 0 || m.toLowerCase().indexOf('not exist') >= 0) {
+              setSupaStatus('error', '❌ Supabase reachable, but bg_game_log table missing — run supabase-setup.sql');
+            } else {
+              setSupaStatus('error', '❌ Supabase error: ' + m);
+            }
+          } else {
+            setSupaStatus('ok', '✅ Supabase OK');
+          }
+        });
+      }).catch(function(e) {
+        var msg = (e && e.message) || 'unknown error';
+        if (msg.toLowerCase().indexOf('fetch') >= 0) {
+          setSupaStatus('error', '❌ Supabase paused or unreachable — check your Supabase dashboard');
+        } else {
+          setSupaStatus('error', '❌ ' + msg);
+        }
+      });
+    }
+    pingSupabase();
+    setInterval(pingSupabase, 30000);
     
     // ===== Service worker =====
     if ('serviceWorker' in navigator) {

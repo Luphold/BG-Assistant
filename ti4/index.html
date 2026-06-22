@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.131 -->
+<!-- TI4 Tracker 2.132 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -103,8 +103,9 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   text-shadow: 0 0 12px rgba(93, 184, 255, 0.6), 0 0 4px rgba(93, 184, 255, 0.8);
   white-space: nowrap;
 }
-.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block; margin-right: 6px; }
-.conn-dot.on { background: var(--green); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); display: inline-block; margin-right: 6px; transition: background 0.3s; }
+.conn-dot.on { background: #2ecc71; box-shadow: 0 0 4px rgba(46, 204, 113, 0.6); }
+.conn-dot.error { background: var(--red); box-shadow: 0 0 4px rgba(231, 76, 60, 0.7); }
 
 /* Tech */
 .tech-chip { display: inline-block; padding: 4px 8px; margin: 2px; border-radius: 4px; font-size: 11px; border-left: 3px solid; }
@@ -203,7 +204,10 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 
 <!-- Status bar (shown in game) -->
 <div id="status-bar" class="status-bar" style="position:sticky;top:0">
-  <div onclick="showRoomCode()" style="cursor:pointer;z-index:1;flex:1"><span class="conn-dot" id="conn-dot"></span><span class="small gold" id="room-display">Room: —</span></div>
+  <div style="display:flex;align-items:center;gap:6px;flex:1;z-index:1">
+    <a href="../" class="btn btn-sm" style="background:none;border:1px solid var(--border2);color:var(--text-dim);font-size:14px;padding:4px 8px;border-radius:6px;text-decoration:none;line-height:1" title="Back to Board Game Assistant front page">⮌</a>
+    <div onclick="showRoomCode()" style="cursor:pointer;display:flex;align-items:center;gap:4px"><span class="conn-dot" id="conn-dot" title="Supabase status"></span><span class="small gold" id="room-display">Room: —</span></div>
+  </div>
   <div style="display:flex;align-items:baseline;gap:8px">
     <div class="round-display" id="round-display">Round 1</div>
     <div id="round-timer" style="font-size:13px;color:var(--text-dim);font-family:monospace">0s</div>
@@ -337,7 +341,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.131';
+var VERSION = '2.132';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -1704,6 +1708,45 @@ function fetchState() {
     if (r.error) { log('Fetch error: ' + r.error.message); return null; }
     return r.data ? r.data.state : null;
   });
+}
+
+// =============================================================================
+// Supabase health-check ping (updates the conn-dot every 30s)
+// =============================================================================
+var _supaPingInterval = null;
+function setConnDotStatus(state) {
+  var dot = document.getElementById('conn-dot');
+  if (!dot) return;
+  dot.classList.remove('on', 'error');
+  if (state === 'ok') {
+    dot.classList.add('on');
+    dot.title = 'Supabase OK';
+  } else if (state === 'error') {
+    dot.classList.add('error');
+    dot.title = 'Supabase unreachable or paused';
+  } else {
+    dot.title = 'Checking Supabase…';
+  }
+}
+function pingSupabase() {
+  if (!supabase) {
+    setConnDotStatus('error');
+    return;
+  }
+  supabase.from('bg_game_log').select('id').limit(1).then(function(r) {
+    if (r.error) {
+      setConnDotStatus('error');
+    } else {
+      setConnDotStatus('ok');
+    }
+  }).catch(function() {
+    setConnDotStatus('error');
+  });
+}
+function startSupabasePing() {
+  if (_supaPingInterval) return; // already running
+  pingSupabase();
+  _supaPingInterval = setInterval(pingSupabase, 30000);
 }
 
 function startPolling() {
@@ -5208,8 +5251,9 @@ window.pickColor = pickColor;
 function enterGame(code) {
   document.getElementById('status-bar').classList.add('visible');
   document.getElementById('nav').classList.add('visible');
-  document.getElementById('conn-dot').classList.add('on');
+  // conn-dot health is managed by pingSupabase() (started below)
   startMessagePolling();
+  startSupabasePing();
   dbGet('settings', 'claim:' + roomCode).then(function(rec) {
     if (rec && typeof rec.v === 'number' && rec.v >= 0) {
       myClaimedSlot = rec.v;
