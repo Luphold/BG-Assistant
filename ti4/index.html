@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.138 -->
+<!-- TI4 Tracker 2.139 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -349,7 +349,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.138';
+var VERSION = '2.139';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -5922,13 +5922,29 @@ function init() {
     var key = results[1] && results[1].v;
     var username = results[2] && results[2].v;
     
+    // Direct localStorage fallback (in case dbGet's internal shadow path didn't run for some reason)
+    try {
+      if (!url) {
+        var lsUrl = localStorage.getItem('bg-settings:url');
+        if (lsUrl) url = lsUrl;
+      }
+      if (!key) {
+        var lsKey = localStorage.getItem('bg-settings:key');
+        if (lsKey) key = lsKey;
+      }
+      if (!username) {
+        var lsUser = localStorage.getItem('bg_username') || localStorage.getItem('bg-settings:username');
+        if (lsUser) username = lsUser;
+      }
+    } catch (e) {}
+    
     // Diagnostic — shown in setup-form so we can see exactly what TI4 found
     var diag = document.getElementById('diagnostic');
     if (diag) {
       var info = [];
-      info.push('TI4 read result:');
-      info.push('  url from dbGet: ' + (url ? 'YES (' + url.substring(0, 30) + '…)' : 'null'));
-      info.push('  key from dbGet: ' + (key ? 'YES (' + key.substring(0, 15) + '…)' : 'null'));
+      info.push('TI4 read result (after fallback):');
+      info.push('  url: ' + (url ? 'YES (' + url.substring(0, 30) + '…)' : 'null'));
+      info.push('  key: ' + (key ? 'YES (' + key.substring(0, 15) + '…)' : 'null'));
       info.push('  username: ' + (username || 'null'));
       info.push('');
       info.push('Direct localStorage check:');
