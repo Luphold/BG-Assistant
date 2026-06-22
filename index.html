@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v1.3.2 - admin frame + guest router (fix: wait for Supabase before enabling buttons) -->
+<!-- Board Game Assistant v1.3.3 - username required before any action -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -443,7 +443,7 @@
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v1.3.2</div>
+      <div class="version">v1.3.3</div>
     </div>
     
   </div>
@@ -507,6 +507,25 @@
     inp.addEventListener('input', function() {
       saveUsername(this.value.trim());
     });
+    
+    // ===== Username required guard =====
+    // Block clicks on any interactive element (companion links, guest button, gear)
+    // until a username has been entered. Pop a warning and focus the username field.
+    function hasUsername() {
+      return (inp.value || '').trim().length > 0;
+    }
+    document.addEventListener('click', function(e) {
+      if (hasUsername()) return;
+      // Allow clicking inside the username panel itself (focusing the field, etc.)
+      if (e.target.closest('.user-panel')) return;
+      // Block any clickable target: links, buttons (game cards, gear, guest button)
+      var clickable = e.target.closest('a, button');
+      if (!clickable) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      alert('Please enter your username first.');
+      inp.focus();
+    }, true); // capture phase so we run before the element's own click handlers
     
     // ===== IndexedDB (shared with TI4 — same origin, same store) =====
     function openDB() {
