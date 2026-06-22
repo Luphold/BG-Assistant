@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v1.6.1 - don't block clicks inside modals -->
+<!-- Board Game Assistant v1.6.3 - localStorage shadow for settings + DB-reset on cache clear -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -497,7 +497,7 @@
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v1.6.1</div>
+      <div class="version">v1.6.3</div>
     </div>
     
   </div>
@@ -604,22 +604,56 @@
         return new Promise(function(resolve) {
           try {
             var r = d.transaction(store).objectStore(store).get(key);
-            r.onsuccess = function() { resolve(r.result); };
-            r.onerror = function() { resolve(null); };
+            r.onsuccess = function() {
+              var rec = r.result;
+              if (rec) { resolve(rec); return; }
+              // Fall back to localStorage shadow
+              try {
+                var ls = localStorage.getItem('bg-settings:' + key);
+                if (ls != null) resolve({ k: key, v: ls });
+                else resolve(null);
+              } catch (e) { resolve(null); }
+            };
+            r.onerror = function() {
+              try {
+                var ls = localStorage.getItem('bg-settings:' + key);
+                if (ls != null) resolve({ k: key, v: ls });
+                else resolve(null);
+              } catch (e) { resolve(null); }
+            };
+          } catch (e) {
+            try {
+              var ls2 = localStorage.getItem('bg-settings:' + key);
+              if (ls2 != null) resolve({ k: key, v: ls2 });
+              else resolve(null);
+            } catch (e2) { resolve(null); }
+          }
+        });
+      }).catch(function() {
+        // openDB failed entirely — try localStorage as last resort
+        return new Promise(function(resolve) {
+          try {
+            var ls = localStorage.getItem('bg-settings:' + key);
+            if (ls != null) resolve({ k: key, v: ls });
+            else resolve(null);
           } catch (e) { resolve(null); }
         });
       });
     }
     function dbSet(store, rec) {
+      // Always shadow to localStorage so settings never disappear even if IndexedDB fails
+      if (store === 'settings' && rec && rec.k && typeof rec.v === 'string') {
+        try { localStorage.setItem('bg-settings:' + rec.k, rec.v); } catch (e) {}
+      }
       return openDB().then(function(d) {
-        return new Promise(function(resolve, reject) {
+        return new Promise(function(resolve) {
           try {
             var r = d.transaction(store, 'readwrite').objectStore(store).put(rec);
             r.onsuccess = function() { resolve(true); };
             r.onerror = function() { resolve(false); };
           } catch (e) { resolve(false); }
         });
-      });
+      }).catch(function() { return false; });
     }
     
     // ===== Supabase loader =====
@@ -756,44 +790,77 @@
       if (!url.match(/^https:\/\//)) { alert('URL must start with https://'); return; }
       var btn = this;
       btn.disabled = true; btn.textContent = 'Saving...';
-      // Validate by trying to connect
-      loadSupabase(url, key).then(function(c) {
-        // Try a small query to verify the key works
-        return c.from('bg_game_log').select('id').limit(1).then(function(r) {
-          if (r.error && r.error.message && r.error.message.toLowerCase().indexOf('invalid') >= 0) {
-            throw new Error('Invalid credentials: ' + r.error.message);
-          }
-          // Success (or "table not found" which means cred is ok but SQL not run)
-          return Promise.all([
-            dbSet('settings', { k: 'url', v: url }),
-            dbSet('settings', { k: 'key', v: key })
-          ]);
+      console.log('[bg-assistant] Save: writing settings to IndexedDB');
+      // Save first — credentials always get persisted regardless of network outcome
+      Promise.all([
+        dbSet('settings', { k: 'url', v: url }),
+        dbSet('settings', { k: 'key', v: key })
+      ]).then(function(results) {
+        console.log('[bg-assistant] Save: dbSet results =', results);
+        // Verify by reading back
+        return Promise.all([dbGet('settings', 'url'), dbGet('settings', 'key')]);
+      }).then(function(verify) {
+        console.log('[bg-assistant] Save: read-back =', verify);
+        if (!verify[0] || verify[0].v !== url) {
+          throw new Error('Settings did not save correctly (url read-back failed)');
+        }
+        // Now optimistically try a connection but don't fail-on-error
+        btn.textContent = 'Validating...';
+        return loadSupabase(url, key).then(function(c) {
+          return c.from('bg_game_log').select('id').limit(1).catch(function(){return null;});
+        }).catch(function(e) {
+          console.log('[bg-assistant] Save: connection validation soft-failed:', e);
+          return null;
         });
       }).then(function() {
+        console.log('[bg-assistant] Save: complete');
         closeSettings();
-        // Reload the stats with the new credentials
         initStats();
+        pingSupabase(); // refresh the status indicator immediately
         btn.disabled = false; btn.textContent = 'Save';
       }).catch(function(e) {
-        alert('Failed to connect: ' + (e && e.message ? e.message : 'unknown error'));
+        console.error('[bg-assistant] Save error:', e);
+        alert('Save failed: ' + (e && e.message ? e.message : 'unknown error') + '\n\nCheck the browser console for details.');
         btn.disabled = false; btn.textContent = 'Save';
       });
     });
     
     document.getElementById('btn-cache').addEventListener('click', function() {
-      if (!confirm('Clear app cache and reload? This unregisters service workers and clears caches but keeps your Supabase settings.')) return;
+      if (!confirm('Clear app cache and reload?\n\nThis unregisters service workers, clears caches, AND wipes the local browser database. You will need to re-enter your Supabase URL and key.')) return;
       var go = function() { location.href = location.pathname + '?v=' + Date.now(); };
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(regs) {
-          Promise.all(regs.map(function(r) { return r.unregister(); })).then(function() {
-            if ('caches' in window) {
-              caches.keys().then(function(keys) {
-                Promise.all(keys.map(function(k) { return caches.delete(k); })).then(go);
-              });
-            } else go();
+      function deleteBgDb() {
+        return new Promise(function(resolve) {
+          // Best-effort: try to delete bg-assistant, ti4, ti4tracker just to be thorough
+          var names = ['bg-assistant', 'ti4', 'ti4tracker'];
+          var remaining = names.length;
+          names.forEach(function(n) {
+            try {
+              var req = indexedDB.deleteDatabase(n);
+              req.onsuccess = req.onerror = req.onblocked = function() {
+                remaining--;
+                if (remaining === 0) resolve();
+              };
+            } catch (e) {
+              remaining--;
+              if (remaining === 0) resolve();
+            }
+          });
+          // Safety net: never block more than 3s
+          setTimeout(resolve, 3000);
+        });
+      }
+      function clearSwsAndCaches() {
+        if (!('serviceWorker' in navigator)) return Promise.resolve();
+        return navigator.serviceWorker.getRegistrations().then(function(regs) {
+          return Promise.all(regs.map(function(r) { return r.unregister(); }));
+        }).then(function() {
+          if (!('caches' in window)) return;
+          return caches.keys().then(function(keys) {
+            return Promise.all(keys.map(function(k) { return caches.delete(k); }));
           });
         });
-      } else go();
+      }
+      Promise.all([deleteBgDb(), clearSwsAndCaches()]).then(go).catch(go);
     });
     
     // Close settings modal when clicking backdrop
