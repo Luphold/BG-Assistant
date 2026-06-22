@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v1.1 - front page with stats -->
+<!-- Board Game Assistant v1.2 - front page with settings -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -37,7 +37,7 @@
       background-size: 320px 320px, 400px 400px, 350px 350px, 280px 280px, 380px 380px, 300px 300px, 100% 100%, 100% 100%;
     }
     .container { max-width: 760px; margin: 0 auto; padding: 28px 18px 60px 18px; }
-    .hdr { text-align: center; padding: 12px 4px 28px 4px; }
+    .hdr { text-align: center; padding: 12px 4px 28px 4px; position: relative; }
     .hdr h1 {
       margin: 0;
       font-size: 28px;
@@ -53,6 +53,21 @@
       color: var(--text-dim);
       text-transform: uppercase;
     }
+    .gear-btn {
+      position: absolute;
+      top: 14px;
+      right: 4px;
+      background: none;
+      border: 1px solid var(--border2);
+      color: var(--text-dim);
+      font-size: 16px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .gear-btn:hover { color: var(--gold); border-color: var(--gold); }
+    
     .user-panel {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -204,7 +219,112 @@
       font-size: 12px;
       padding: 14px 0;
     }
-    .no-supabase a { color: var(--gold); text-decoration: none; border-bottom: 1px dashed var(--gold); }
+    .no-supabase a { color: var(--gold); text-decoration: none; border-bottom: 1px dashed var(--gold); cursor: pointer; }
+    
+    /* Settings modal */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--bg);
+      border: 1px solid var(--border2);
+      border-radius: 12px;
+      max-width: 480px;
+      width: 100%;
+      padding: 22px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    }
+    .modal h2 {
+      margin: 0 0 4px 0;
+      font-size: 18px;
+      color: var(--gold);
+      letter-spacing: .08em;
+    }
+    .modal .modal-sub {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 18px;
+    }
+    .modal label {
+      display: block;
+      font-size: 11px;
+      letter-spacing: .12em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+    .modal input {
+      width: 100%;
+      background: rgba(10, 14, 26, 0.6);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 9px 11px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .modal input:focus { outline: none; border-color: var(--gold); }
+    .modal .help {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 10px;
+      line-height: 1.5;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .modal-actions button, .modal-actions a {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border2);
+      background: rgba(36, 50, 84, 0.5);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+      text-decoration: none;
+      text-align: center;
+    }
+    .modal-actions button:hover, .modal-actions a:hover {
+      background: rgba(36, 50, 84, 0.8);
+      color: var(--gold);
+      border-color: var(--gold);
+    }
+    .modal-actions button.primary {
+      background: var(--gold);
+      color: #000;
+      border-color: var(--gold);
+    }
+    .modal-actions button.primary:hover {
+      background: #f0c528;
+      color: #000;
+    }
+    .modal-actions button.danger {
+      flex: 0;
+      padding: 10px 12px;
+      color: var(--red);
+      border-color: rgba(231, 76, 60, 0.4);
+    }
+    .modal-actions button.danger:hover {
+      background: rgba(231, 76, 60, 0.15);
+      color: var(--red);
+      border-color: var(--red);
+    }
   </style>
 </head>
 <body>
@@ -213,6 +333,7 @@
     <div class="hdr">
       <h1>BOARD GAME ASSISTANT</h1>
       <div class="sub">Companion tools for tabletop nights</div>
+      <button class="gear-btn" id="btn-gear" title="Settings">⚙</button>
     </div>
     
     <div class="user-panel">
@@ -266,9 +387,33 @@
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v1.1.0</div>
+      <div class="version">v1.2.0</div>
     </div>
     
+  </div>
+  
+  <!-- Settings modal -->
+  <div class="modal-overlay" id="settings-modal">
+    <div class="modal">
+      <h2>⚙ Supabase Settings</h2>
+      <div class="modal-sub">Connect to your Supabase project. These credentials are shared across all games.</div>
+      
+      <label for="inp-url">Project URL</label>
+      <input type="url" id="inp-url" placeholder="https://abcdefghij.supabase.co">
+      
+      <label for="inp-key">Anon Key</label>
+      <input type="text" id="inp-key" placeholder="eyJ...">
+      
+      <div class="help">
+        Find these in your Supabase project → <b>Settings</b> → <b>API Keys</b>. Use just the base URL (no <code>/rest/v1/</code>). Make sure you've run the <code>ti4/supabase-setup.sql</code> script first.
+      </div>
+      
+      <div class="modal-actions">
+        <button class="danger" id="btn-cache" title="Clear app cache and reload">↺</button>
+        <button id="btn-cancel">Cancel</button>
+        <button class="primary" id="btn-save">Save</button>
+      </div>
+    </div>
   </div>
   
   <script>
@@ -287,7 +432,7 @@
       saveUsername(this.value.trim());
     });
     
-    // ===== Read Supabase credentials from IndexedDB (set by TI4) =====
+    // ===== IndexedDB (shared with TI4 — same origin, same store) =====
     function openDB() {
       return new Promise(function(resolve, reject) {
         var req = indexedDB.open('ti4tracker', 3);
@@ -309,9 +454,18 @@
         });
       });
     }
+    function dbSet(store, rec) {
+      return openDB().then(function(d) {
+        return new Promise(function(resolve) {
+          var r = d.transaction(store, 'readwrite').objectStore(store).put(rec);
+          r.onsuccess = function() { resolve(); };
+          r.onerror = function() { resolve(); };
+        });
+      });
+    }
     
     // ===== Supabase loader =====
-    var supabase = null;
+    var supabaseClient = null;
     function loadSupabase(url, key) {
       return new Promise(function(resolve, reject) {
         if (window.supabase && window.supabase.createClient) {
@@ -324,17 +478,83 @@
           try { resolve(window.supabase.createClient(url, key)); }
           catch (e) { reject(e); }
         };
-        s.onerror = function() { reject(); };
+        s.onerror = function() { reject(new Error('Could not load Supabase library')); };
         document.head.appendChild(s);
       });
     }
+    
+    // ===== Settings modal =====
+    function openSettings() {
+      Promise.all([dbGet('settings', 'url'), dbGet('settings', 'key')]).then(function(results) {
+        document.getElementById('inp-url').value = (results[0] && results[0].v) || '';
+        document.getElementById('inp-key').value = (results[1] && results[1].v) || '';
+        document.getElementById('settings-modal').classList.add('open');
+      });
+    }
+    function closeSettings() {
+      document.getElementById('settings-modal').classList.remove('open');
+    }
+    document.getElementById('btn-gear').addEventListener('click', openSettings);
+    document.getElementById('btn-cancel').addEventListener('click', closeSettings);
+    
+    document.getElementById('btn-save').addEventListener('click', function() {
+      var url = document.getElementById('inp-url').value.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '');
+      var key = document.getElementById('inp-key').value.trim();
+      if (!url || !key) { alert('Please enter URL and key'); return; }
+      if (!url.match(/^https:\/\//)) { alert('URL must start with https://'); return; }
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Saving...';
+      // Validate by trying to connect
+      loadSupabase(url, key).then(function(c) {
+        // Try a small query to verify the key works
+        return c.from('bg_game_log').select('id').limit(1).then(function(r) {
+          if (r.error && r.error.message && r.error.message.toLowerCase().indexOf('invalid') >= 0) {
+            throw new Error('Invalid credentials: ' + r.error.message);
+          }
+          // Success (or "table not found" which means cred is ok but SQL not run)
+          return Promise.all([
+            dbSet('settings', { k: 'url', v: url }),
+            dbSet('settings', { k: 'key', v: key })
+          ]);
+        });
+      }).then(function() {
+        closeSettings();
+        // Reload the stats with the new credentials
+        initStats();
+        btn.disabled = false; btn.textContent = 'Save';
+      }).catch(function(e) {
+        alert('Failed to connect: ' + (e && e.message ? e.message : 'unknown error'));
+        btn.disabled = false; btn.textContent = 'Save';
+      });
+    });
+    
+    document.getElementById('btn-cache').addEventListener('click', function() {
+      if (!confirm('Clear app cache and reload? This unregisters service workers and clears caches but keeps your Supabase settings.')) return;
+      var go = function() { location.href = location.pathname + '?v=' + Date.now(); };
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          Promise.all(regs.map(function(r) { return r.unregister(); })).then(function() {
+            if ('caches' in window) {
+              caches.keys().then(function(keys) {
+                Promise.all(keys.map(function(k) { return caches.delete(k); })).then(go);
+              });
+            } else go();
+          });
+        });
+      } else go();
+    });
+    
+    // Close settings modal when clicking backdrop
+    document.getElementById('settings-modal').addEventListener('click', function(e) {
+      if (e.target === this) closeSettings();
+    });
     
     // ===== Stats rendering =====
     function statsEmptyMessage() {
       return '<div class="stats-empty">No games recorded yet — stats will appear here once you finish your first game.</div>';
     }
     function statsNoSupabaseMessage() {
-      return '<div class="no-supabase">Stats need Supabase access. Open <a href="ti4/">Twilight Imperium IV</a> first to set up your Supabase URL and key — stats will appear here automatically.</div>';
+      return '<div class="no-supabase">Stats need Supabase access. <a onclick="openSettings()">Open Settings</a> to enter your Supabase URL and key.</div>';
     }
     
     function renderStatsFromRows(rows) {
@@ -345,11 +565,10 @@
         return;
       }
       
-      // Totals across all games
       var total = rows.length;
-      var byGame = {};   // game_type -> count
-      var winnerCounts = {}; // winner display -> count (across all games)
-      var perGameStats = {}; // game_type -> { count, lastPlayedAt, lastWinner }
+      var byGame = {};
+      var winnerCounts = {};
+      var perGameStats = {};
       var lastPlayedRow = rows[0];
       
       rows.forEach(function(r) {
@@ -367,18 +586,15 @@
         }
       });
       
-      // Convert byGame to ordered list (most-played first)
       var gameTypeLabel = { ti4: 'TI4', catan: 'Catan', smallworld: 'Small World' };
       var gameBreakdown = Object.keys(byGame).map(function(k) {
         return { type: k, count: byGame[k] };
       }).sort(function(a, b) { return b.count - a.count; });
       
-      // Top 3 winners
       var topWinners = Object.keys(winnerCounts).map(function(name) {
         return { name: name, count: winnerCounts[name] };
       }).sort(function(a, b) { return b.count - a.count; }).slice(0, 3);
       
-      // Build HTML
       var h = '<div class="stats-row">';
       h += '<div class="stat-item"><div class="stat-value">' + total + '</div><div class="stat-label">Total Games</div></div>';
       gameBreakdown.forEach(function(g) {
@@ -387,7 +603,6 @@
       });
       h += '</div>';
       
-      // Last played
       if (lastPlayedRow) {
         var lpLabel = gameTypeLabel[lastPlayedRow.game_type] || lastPlayedRow.game_type;
         h += '<div class="last-played">Last played: <b>' + lpLabel + '</b>';
@@ -395,7 +610,6 @@
         h += ' · ' + formatRelative(lastPlayedRow.played_at) + '</div>';
       }
       
-      // Top winners
       if (topWinners.length) {
         h += '<div class="winner-pills">';
         topWinners.forEach(function(w) {
@@ -409,7 +623,6 @@
     }
     
     function renderGameStats(perGame) {
-      // Per-card mini stats line ("12 games · last won by Alice")
       var ti4Stats = document.getElementById('game-stats-ti4');
       if (!ti4Stats) return;
       if (perGame && perGame.ti4) {
@@ -442,22 +655,26 @@
       return years + ' year' + (years > 1 ? 's' : '') + ' ago';
     }
     
-    // ===== Init: try to load credentials and fetch stats =====
+    // ===== Init: load credentials, fetch stats, auto-open settings if missing =====
     function initStats() {
       Promise.all([dbGet('settings', 'url'), dbGet('settings', 'key')]).then(function(results) {
         var url = results[0] && results[0].v;
         var key = results[1] && results[1].v;
         if (!url || !key) {
           document.getElementById('stats-panel').innerHTML = statsNoSupabaseMessage();
+          // Auto-open the settings modal on first visit
+          if (!window._settingsAutoOpened) {
+            window._settingsAutoOpened = true;
+            setTimeout(openSettings, 300);
+          }
           return;
         }
         loadSupabase(url, key).then(function(client) {
-          supabase = client;
-          // Fetch last 200 finished games
-          supabase.from('bg_game_log').select('*').order('played_at', { ascending: false }).limit(200).then(function(r) {
+          supabaseClient = client;
+          supabaseClient.from('bg_game_log').select('*').order('played_at', { ascending: false }).limit(200).then(function(r) {
             if (r.error) {
               if (r.error.message && r.error.message.indexOf('bg_game_log') >= 0) {
-                document.getElementById('stats-panel').innerHTML = '<div class="no-supabase">Stats table not found. Please run the latest <code>supabase-setup.sql</code> in your Supabase project.</div>';
+                document.getElementById('stats-panel').innerHTML = '<div class="no-supabase">Stats table not found. Please run the latest <code>ti4/supabase-setup.sql</code> in your Supabase project.</div>';
               } else {
                 document.getElementById('stats-panel').innerHTML = '<div class="stats-empty">Could not load stats: ' + escapeHtml(r.error.message || 'unknown error') + '</div>';
               }
@@ -465,14 +682,15 @@
             }
             renderStatsFromRows(r.data || []);
           });
-        }).catch(function() {
-          document.getElementById('stats-panel').innerHTML = '<div class="stats-empty">Could not connect to Supabase.</div>';
+        }).catch(function(e) {
+          document.getElementById('stats-panel').innerHTML = '<div class="stats-empty">Could not connect to Supabase: ' + escapeHtml(e && e.message ? e.message : 'unknown error') + '</div>';
         });
       }).catch(function() {
         document.getElementById('stats-panel').innerHTML = statsNoSupabaseMessage();
       });
     }
     initStats();
+    window.openSettings = openSettings;  // expose for inline link click
     
     // ===== Service worker =====
     if ('serviceWorker' in navigator) {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.128 -->
+<!-- TI4 Tracker 2.129 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -151,28 +151,27 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   <div class="subtitle">Twilight Imperium IV</div>
   
   <div class="panel">
-    <div class="panel-title">Connect to Supabase</div>
+    <div class="panel-title">Twilight Imperium IV</div>
     <div class="version" id="version-display">v2.002</div>
     
     <div id="setup-form">
-      <label>Username</label>
-      <input id="inp-username" type="text" placeholder="Your display name" maxlength="20">
-      <label class="mt-8">Supabase Project URL</label>
-      <input id="inp-url" type="url" placeholder="https://xxxx.supabase.co">
-      <label>Supabase Anon Key</label>
-      <input id="inp-key" type="text" placeholder="eyJ...">
-      <button id="btn-save" class="btn btn-primary btn-full mt-16">Save & Connect</button>
+      <div class="small dim" style="text-align:center;padding:20px 8px;line-height:1.6">
+        Supabase isn't configured yet.<br><br>
+        Open the <b>Board Game Assistant</b> front page to set up your Supabase URL and key.
+      </div>
+      <a href="../" class="btn btn-primary btn-full mt-8" style="text-decoration:none;text-align:center">⮌ Back to Front Page</a>
       <button id="btn-reset" class="btn btn-full mt-8">↺ Clear Cache & Reload</button>
-      <div class="small dim mt-8">Get the URL and Anon Key from Supabase → Settings → API Keys.<br>Use just the base URL (no /rest/v1/). Username is shown when sending messages in-game.</div>
     </div>
     
     <div id="login-form" style="display:none">
-      <div class="small dim" id="url-display"></div>
+      <label>Username</label>
+      <input id="inp-username" type="text" placeholder="Your display name" maxlength="20">
+      <div class="small dim" id="url-display" style="margin-top:8px"></div>
       <button id="btn-resume-admin" class="btn btn-primary btn-full mt-16" style="display:none;background:rgba(93,184,255,0.15);border-color:#5db8ff;color:#5db8ff;font-size:18px;font-weight:700;padding:18px;letter-spacing:.05em">↺ Resume Previous Game</button>
       <button id="btn-admin" class="btn btn-primary btn-full mt-16" style="font-size:20px;font-weight:700;padding:22px;letter-spacing:.08em">Enter as Admin</button>
       <button id="btn-guest" class="btn btn-full mt-8" style="font-size:20px;font-weight:700;padding:22px;letter-spacing:.08em">Enter as Guest</button>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px">
-        <button id="btn-settings" class="btn btn-sm dim" style="border:none;background:none;color:var(--text-dim);font-size:12px">⚙ Change settings</button>
+        <a href="../" class="btn btn-sm dim" style="border:none;background:none;color:var(--text-dim);font-size:12px;text-decoration:none">⮌ Front Page</a>
         <button id="btn-howto" class="btn btn-sm dim" style="border:none;background:none;color:var(--text-dim);font-size:12px">📖 How To</button>
       </div>
     </div>
@@ -326,7 +325,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.128';
+var VERSION = '2.129';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -5313,8 +5312,20 @@ window.claimSlot = claimSlot;
 window.claimAdminOnly = claimAdminOnly;
 window.releaseClaim = releaseClaim;
 
+function captureUsername() {
+  var u = document.getElementById('inp-username');
+  if (!u) return;
+  var username = u.value.trim().slice(0, 20);
+  if (username) {
+    myUsername = username;
+    dbSet('settings', { k: 'username', v: username });
+    try { localStorage.setItem('bg_username', username); } catch (e) {}
+  }
+}
+
 function enterAsAdmin() {
   log('Entering as admin');
+  captureUsername();
   isAdmin = true;
   roomCode = generateRoomCode();
   state = { players: [], round: 1, vpGoal: 10, started: false, ended: false, winner: null };
@@ -5329,6 +5340,7 @@ function enterAsAdmin() {
 
 function resumeAsAdmin() {
   log('Resuming as admin');
+  captureUsername();
   isAdmin = true;
   // Load the saved room code and fetch state from Supabase
   dbGet('settings', 'lastRoom').then(function(rec) {
@@ -5359,6 +5371,7 @@ window.resumeAsAdmin = resumeAsAdmin;
 
 function enterAsGuest() {
   log('Show join screen');
+  captureUsername();
   showScreen('screen-join');
 }
 
@@ -5377,38 +5390,6 @@ function joinGame() {
     }
     enterGame();
     startPolling();
-  });
-}
-
-function saveSettings() {
-  var url = document.getElementById('inp-url').value.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '');
-  var key = document.getElementById('inp-key').value.trim();
-  var username = document.getElementById('inp-username').value.trim().slice(0, 20);
-  if (!url || !key) return alert('Please enter URL and key');
-  if (!url.startsWith('https://')) return alert('URL must start with https://');
-  
-  var btn = document.getElementById('btn-save');
-  btn.disabled = true;
-  btn.textContent = 'Connecting...';
-  
-  initSupabase(url, key).then(function() {
-    dbSet('settings', { k: 'url', v: url });
-    dbSet('settings', { k: 'key', v: key });
-    if (username) {
-      dbSet('settings', { k: 'username', v: username });
-      // Also mirror to localStorage so the Board Game Assistant front page reads the same name
-      try { localStorage.setItem('bg_username', username); } catch (e) {}
-    }
-    log('Settings saved');
-    document.getElementById('url-display').textContent = url;
-    document.getElementById('setup-form').style.display = 'none';
-    document.getElementById('login-form').style.display = '';
-    btn.disabled = false;
-    btn.textContent = 'Save & Connect';
-  }).catch(function(e) {
-    alert('Failed to connect: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = 'Save & Connect';
   });
 }
 
@@ -5431,7 +5412,6 @@ function clearCache() {
 // =============================================================================
 // Wire up buttons
 // =============================================================================
-document.getElementById('btn-save').addEventListener('click', saveSettings);
 document.getElementById('btn-reset').addEventListener('click', clearCache);
 document.getElementById('btn-admin').addEventListener('click', enterAsAdmin);
 document.getElementById('btn-resume-admin').addEventListener('click', resumeAsAdmin);
@@ -5439,10 +5419,6 @@ document.getElementById('btn-guest').addEventListener('click', enterAsGuest);
 document.getElementById('btn-howto').addEventListener('click', showHowTo);
 document.getElementById('btn-join').addEventListener('click', joinGame);
 document.getElementById('btn-join-back').addEventListener('click', function() { showScreen('screen-welcome'); });
-document.getElementById('btn-settings').addEventListener('click', function() {
-  document.getElementById('login-form').style.display = 'none';
-  document.getElementById('setup-form').style.display = '';
-});
 document.getElementById('btn-add-player').addEventListener('click', addPlayer);
 document.getElementById('btn-auto-color').addEventListener('click', tempAutoColor);
 document.getElementById('btn-start').addEventListener('click', startGame);
@@ -5635,12 +5611,13 @@ function showHowTo() {
   
   // Troubleshooting
   h += '<div style="font-size:11px;letter-spacing:.15em;color:var(--gold);text-transform:uppercase;margin-top:12px;margin-bottom:6px;border-bottom:1px solid var(--border);padding-bottom:3px">🛠 Troubleshooting</div>';
-  h += '<p style="margin:6px 0"><b>"Failed to connect" on Save & Connect:</b></p>';
+  h += '<p style="margin:6px 0"><b>"Failed to connect" when saving Supabase settings:</b></p>';
   h += '<ul style="padding-left:18px;margin:0">';
+  h += '<li>Supabase settings live on the front-page <b>⚙ Settings</b> modal (not in TI4)</li>';
   h += '<li>Double-check URL is in the URL field (not the key)</li>';
   h += '<li>URL should look like <code style="color:var(--gold)">https://abcdefghij.supabase.co</code></li>';
   h += '<li>Anon key should start with <code style="color:var(--gold)">eyJ…</code> and be very long</li>';
-  h += '<li>Make sure you ran <code>supabase-setup.sql</code> — the script creates the three required tables (ti4_rooms, ti4_history, ti4_chat) and the explicit GRANTs needed for projects created after May 30, 2026</li>';
+  h += '<li>Make sure you ran <code>supabase-setup.sql</code> — the script creates the required tables (ti4_rooms, ti4_history, ti4_chat, bg_game_log) and the explicit GRANTs needed for projects created after May 30, 2026</li>';
   h += '</ul>';
   h += '<p style="margin:6px 0"><b>Guest can\'t see admin\'s game:</b></p>';
   h += '<ul style="padding-left:18px;margin:0">';
@@ -5650,7 +5627,7 @@ function showHowTo() {
   h += '</ul>';
   h += '<p style="margin:6px 0"><b>Buttons not responding / weird behavior after update:</b></p>';
   h += '<ul style="padding-left:18px;margin:0">';
-  h += '<li>On the Supabase setup screen, tap <b>↺ Clear Cache & Reload</b> to force a fresh load</li>';
+  h += '<li>On the front-page <b>⚙ Settings</b>, tap the <b>↺</b> button on the left to clear cache and reload</li>';
   h += '</ul>';
   
   h += '</div>'; // close scroll wrapper
@@ -5686,8 +5663,6 @@ function init() {
     if (url && key) {
       log('Have saved credentials');
       document.getElementById('url-display').textContent = url;
-      document.getElementById('inp-url').value = url;
-      document.getElementById('inp-key').value = key;
       document.getElementById('setup-form').style.display = 'none';
       document.getElementById('login-form').style.display = '';
       initSupabase(url, key).then(function() {

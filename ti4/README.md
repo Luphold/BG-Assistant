@@ -79,19 +79,19 @@ This creates three tables: `ti4_rooms` (current game state), `ti4_history` (clou
 3. You'll need two things:
    - **Project URL** — looks like `https://abcdefghij.supabase.co`
    - **Project API Key** → the **anon / public** key (a long string starting with `eyJ…`)
-4. Keep this tab open — you'll paste these into the app in a moment.
+4. Keep this tab open — you'll paste these into the front-page Settings in a moment.
 
 ### Step 4 — Open the app
 
-Open the Board Game Assistant front page at **[https://luphold.github.io/bg-assistant/](https://luphold.github.io/bg-assistant/)** and tap **Twilight Imperium IV → Companion**.
+Open the Board Game Assistant front page at **[https://luphold.github.io/bg-assistant/](https://luphold.github.io/bg-assistant/)**.
 
-1. Paste the **Project URL** into the URL field
-2. Paste the **Anon Key** into the key field
-3. Tap **Save & Connect**
-4. Enter a **Username** (used for player claim and messaging)
+1. On first visit, a Settings modal opens automatically asking for your Supabase URL and Anon Key
+2. Paste them in and tap **Save** — credentials are saved locally and shared across all games
+3. Enter your **Username** in the username field at the top (used for player claim and messaging)
+4. Tap **Twilight Imperium IV → Companion** to launch the TI4 app
 5. Tap **Enter as Admin** (or **Enter as Guest** + room code if joining)
 
-You're done with setup! Credentials are saved locally on this device — you won't need to enter them again unless you clear browser data.
+You're done with setup! Credentials are saved locally on this device — you won't need to enter them again unless you clear browser data. To change them later, tap the **⚙** gear icon in the top-right of the front page.
 
 > ⚠️ **Don't share your Supabase password.** Only share the **URL** and the **anon key**. The anon key is public-safe and is meant to be embedded in client apps.
 
@@ -189,7 +189,7 @@ You can host this app anywhere static files can be served:
 
 ## 🛠️ Troubleshooting
 
-**"Failed to connect" on Save & Connect**
+**"Failed to connect" when saving Supabase settings**
 - Double-check that you pasted the URL (not the key) into the URL field
 - The URL should look like `https://abcdefghij.supabase.co` — no `/rest/v1/` at the end
 - The anon key should start with `eyJ…` and be very long
@@ -201,7 +201,7 @@ You can host this app anywhere static files can be served:
 - Tap the **🐞** button (bottom right) to see the connection log
 
 **Buttons not responding / weird behavior after an update**
-- On the Supabase setup screen, tap **↺ Clear Cache & Reload** to force a fresh load
+- Open the front-page **⚙** Settings and tap the **↺** button (left side) to clear cache and reload
 
 ---
 
