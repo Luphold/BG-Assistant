@@ -57,32 +57,12 @@ CREATE TABLE ti4_chat (
 CREATE INDEX ti4_chat_room_recipient ON ti4_chat(room_code, recipient);
 
 -- ============================================================================
--- CROSS-GAME (Board Game Assistant) TABLES
--- ============================================================================
-
--- ── Game log — one row per finished game across ALL games ──────────────────
--- Used by the front-page Global Stats panel.
-CREATE TABLE bg_game_log (
-  id              BIGSERIAL PRIMARY KEY,
-  game_type       TEXT NOT NULL,
-  played_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  duration_min    INT,
-  player_count    INT,
-  players         JSONB,
-  winner          TEXT,
-  data            JSONB
-);
-CREATE INDEX bg_game_log_game_type ON bg_game_log(game_type);
-CREATE INDEX bg_game_log_played_at ON bg_game_log(played_at DESC);
-
--- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
 
 ALTER TABLE ti4_rooms    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ti4_history  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ti4_chat     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bg_game_log  ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "rooms_select" ON ti4_rooms  FOR SELECT USING (true);
 CREATE POLICY "rooms_insert" ON ti4_rooms  FOR INSERT WITH CHECK (true);
@@ -91,21 +71,19 @@ CREATE POLICY "rooms_delete" ON ti4_rooms  FOR DELETE USING (true);
 
 CREATE POLICY "history_select" ON ti4_history FOR SELECT USING (true);
 CREATE POLICY "history_insert" ON ti4_history FOR INSERT WITH CHECK (true);
+CREATE POLICY "history_delete" ON ti4_history FOR DELETE USING (true);
 
 CREATE POLICY "messages_select" ON ti4_chat FOR SELECT USING (true);
 CREATE POLICY "messages_insert" ON ti4_chat FOR INSERT WITH CHECK (true);
 CREATE POLICY "messages_delete" ON ti4_chat FOR DELETE USING (true);
 
-CREATE POLICY "gamelog_select" ON bg_game_log FOR SELECT USING (true);
-CREATE POLICY "gamelog_insert" ON bg_game_log FOR INSERT WITH CHECK (true);
-
 -- ============================================================================
 -- EXPLICIT GRANTS (required for new projects after 2026-05-30)
 -- ============================================================================
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ti4_rooms,  ti4_history, ti4_chat, bg_game_log TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ti4_rooms,  ti4_history, ti4_chat, bg_game_log TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ti4_rooms,  ti4_history, ti4_chat, bg_game_log TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ti4_rooms,  ti4_history, ti4_chat TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ti4_rooms,  ti4_history, ti4_chat TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ti4_rooms,  ti4_history, ti4_chat TO service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 
 -- ============================================================================

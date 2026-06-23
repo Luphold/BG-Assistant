@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.143 -->
+<!-- TI4 Tracker 2.147 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -134,6 +134,9 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 .modal { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: rgba(26, 36, 64, 0.95); border-radius: 12px 12px 0 0; max-height: 85vh; overflow-y: auto; z-index: 101; padding: 20px; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0)); backdrop-filter: blur(8px); }
 .modal.open { display: block; }
 .modal.modal-center { top: 50%; bottom: auto; left: 50%; right: auto; transform: translate(-50%, -50%); border-radius: 12px; max-width: 320px; width: 90%; max-height: 90vh; padding: 16px; }
+.modal.modal-wide { max-width: min(720px, 92vw); }
+.modal.modal-wide .small.dim { font-size: 13px; }  /* slightly larger text in wide layout */
+@media (max-width: 600px) { .modal.modal-wide { max-width: 320px; } }
 .modal-section { font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: var(--gold); margin: 14px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
 .modal-text { font-size: 13px; line-height: 1.5; margin-bottom: 6px; padding-left: 8px; border-left: 2px solid var(--border2); }
 
@@ -348,7 +351,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.143';
+var VERSION = '2.147';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -3079,13 +3082,47 @@ function renderVote() {
 }
 
 function renderHistory() {
-  dbGetAll('history').then(function(entries) {
+  // Read from both sources in parallel — IndexedDB (local) and Supabase ti4_history (cloud)
+  // Merge and dedupe by playedAt timestamp (Supabase is authoritative; local fills in if cloud missing entry)
+  Promise.all([
+    dbGetAll('history').catch(function(){ return []; }),
+    (supabase ? supabase.from('ti4_history').select('*').order('played_at', { ascending: false }).limit(200).then(function(r) {
+      if (r.error) { log('History fetch error: ' + r.error.message); return []; }
+      return (r.data || []).map(function(row) {
+        // Reconstruct local-shape entry from Supabase row
+        var entry = row.state || {};
+        entry.id = 'sb-' + row.id; // string id so it doesn't collide with IndexedDB auto-int
+        entry.playedAt = entry.playedAt || row.played_at;
+        entry.players = entry.players || row.players;
+        entry.winner = entry.winner || row.winner;
+        entry.rounds = entry.rounds || row.rounds;
+        entry.vpGoal = entry.vpGoal || row.vp_goal;
+        entry.roomCode = entry.roomCode || row.room_code;
+        entry._source = 'supabase';
+        return entry;
+      });
+    }).catch(function(e) { log('History fetch exception: ' + e.message); return []; }) : Promise.resolve([]))
+  ]).then(function(results) {
+    var local = results[0] || [];
+    var cloud = results[1] || [];
+    // Merge: prefer cloud entries over local ones with the same playedAt
+    var byKey = {};
+    cloud.forEach(function(e) {
+      if (e.playedAt) byKey[e.playedAt] = e;
+    });
+    local.forEach(function(e) {
+      e._source = e._source || 'local';
+      if (e.playedAt && !byKey[e.playedAt]) byKey[e.playedAt] = e;
+    });
+    var entries = Object.keys(byKey).map(function(k) { return byKey[k]; })
+      .sort(function(a, b) { return new Date(b.playedAt) - new Date(a.playedAt); });
+    
     var el = document.getElementById('history-content');
     if (!entries.length) {
       el.innerHTML = '<div class="small dim center" style="padding:20px">No completed games yet</div>';
       return;
     }
-    el.innerHTML = entries.reverse().map(function(e) {
+    el.innerHTML = entries.map(function(e) {
       var date = new Date(e.playedAt).toLocaleDateString();
       var players = (e.players || []).map(function(p) { return p.name; }).join(', ');
       var playerById = {};
@@ -3248,8 +3285,8 @@ function renderHistory() {
       }
       
       h += '</div>'; // close hist-export wrapper
-      h += '<button class="btn btn-sm" onclick="deleteHistory(' + e.id + ')" style="position:absolute;top:8px;right:8px;color:var(--red)">🗑</button>';
-      h += '<button class="btn btn-sm" onclick="exportHistoryEntry(' + e.id + ')" style="position:absolute;top:48px;right:8px;color:var(--gold);font-size:14px" title="Export as image">📤</button>';
+      h += '<button class="btn btn-sm" onclick="deleteHistory(\'' + e.id + '\')" style="position:absolute;top:8px;right:8px;color:var(--red)">🗑</button>';
+      h += '<button class="btn btn-sm" onclick="exportHistoryEntry(\'' + e.id + '\')" style="position:absolute;top:48px;right:8px;color:var(--gold);font-size:14px" title="Export as image">📤</button>';
       h += '</div>';
       return h;
     }).join('');
@@ -3488,6 +3525,7 @@ function closeModal() {
   var m = document.getElementById('modal');
   m.classList.remove('open');
   m.classList.remove('modal-center');
+  m.classList.remove('modal-wide');
   document.getElementById('modal-overlay').classList.remove('open');
   if (typeof stopVotingAutoRefresh === 'function') stopVotingAutoRefresh();
 }
@@ -4266,12 +4304,47 @@ function nextRound() {
   // Require all players to have picked a strategy card this round (if feature is enabled)
   var feat = state.features || { strategy: true, tech: true };
   if (feat.strategy !== false && !allPlayersPickedStrategy()) {
-    alert('All players must pick a strategy card before advancing to the next round.');
-    setNav('strategy');
+    showInfoModal({
+      icon: '⚠',
+      title: 'Strategy Cards Needed',
+      message: 'All players must pick a strategy card before advancing to the next round.',
+      confirmLabel: 'Go to Strategy Tab',
+      onConfirm: function() { setNav('strategy'); }
+    });
     return;
   }
   promptRoundPhoto();
 }
+
+// Generic styled info modal — matches the visual style of promptRoundPhoto / voting modals
+// opts: { icon, title, message, confirmLabel, onConfirm, cancelLabel, onCancel }
+function showInfoModal(opts) {
+  opts = opts || {};
+  var h = '<div style="text-align:center;padding:8px 0">';
+  if (opts.icon) h += '<div style="font-size:32px;line-height:1">' + opts.icon + '</div>';
+  if (opts.title) h += '<div class="gold" style="font-size:16px;letter-spacing:.08em;margin-top:6px;margin-bottom:8px">' + opts.title + '</div>';
+  if (opts.message) h += '<div class="small dim" style="margin-bottom:16px;line-height:1.5">' + opts.message + '</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px">';
+  h += '<button class="btn btn-primary" onclick="window._infoConfirm()">' + (opts.confirmLabel || 'OK') + '</button>';
+  if (opts.cancelLabel) {
+    h += '<button class="btn" onclick="window._infoCancel()">' + opts.cancelLabel + '</button>';
+  }
+  h += '</div></div>';
+  window._infoConfirm = function() {
+    closeModal();
+    if (opts.onConfirm) opts.onConfirm();
+  };
+  window._infoCancel = function() {
+    closeModal();
+    if (opts.onCancel) opts.onCancel();
+  };
+  var modal = document.getElementById('modal');
+  modal.classList.add('modal-center');
+  modal.innerHTML = h;
+  modal.classList.add('open');
+  document.getElementById('modal-overlay').classList.add('open');
+}
+window.showInfoModal = showInfoModal;
 
 function allPlayersPickedStrategy() {
   if (!state.strategies) return false;
@@ -4809,11 +4882,30 @@ function endGame(winnerName) {
   // Require all players to have picked a strategy card this round (skip if auto-end or feature disabled)
   var feat = state.features || { strategy: true, tech: true };
   if (!winnerName && feat.strategy !== false && !allPlayersPickedStrategy()) {
-    alert('All players must pick a strategy card before ending the game.');
-    setNav('strategy');
+    showInfoModal({
+      icon: '⚠',
+      title: 'Strategy Cards Needed',
+      message: 'All players must pick a strategy card before ending the game.',
+      confirmLabel: 'Go to Strategy Tab',
+      onConfirm: function() { setNav('strategy'); }
+    });
     return;
   }
-  if (!winnerName && !confirm('End game and save results?')) return;
+  if (!winnerName) {
+    showInfoModal({
+      icon: '🏁',
+      title: 'End Game?',
+      message: 'End game and save results to history?',
+      confirmLabel: 'End Game',
+      cancelLabel: 'Cancel',
+      onConfirm: function() { doEndGame(null); }
+    });
+    return;
+  }
+  doEndGame(winnerName);
+}
+
+function doEndGame(winnerName) {
   if (!winnerName) {
     var sorted = state.players.slice().sort(function(a,b) { return b.vp - a.vp; });
     winnerName = sorted[0] ? sorted[0].name : null;
@@ -4827,7 +4919,7 @@ function endGame(winnerName) {
   if (state.round > 2) {
     // Load photos from cache and bundle into history
     loadAllPhotoCache().then(function(photos) {
-      dbSet('history', {
+      var historyEntry = {
         playedAt: new Date().toISOString(),
         startTime: state.startTime,
         endTime: state.endTime,
@@ -4838,13 +4930,29 @@ function endGame(winnerName) {
         players: state.players.map(function(p) { return {name: p.name, faction: p.faction, vp: p.vp, color: p.color}; }),
         winner: winnerName,
         rounds: state.round,
-        vpGoal: state.vpGoal
-      }).then(function() {
+        vpGoal: state.vpGoal,
+        roomCode: roomCode
+      };
+      // Local save (IndexedDB)
+      dbSet('history', historyEntry).then(function() {
         clearPhotoCache();
       });
+      // Also save to Supabase ti4_history so it survives even when IndexedDB is flaky
+      if (supabase) {
+        supabase.from('ti4_history').insert({
+          room_code: roomCode,
+          played_at: historyEntry.playedAt,
+          state: historyEntry,
+          players: historyEntry.players,
+          winner: winnerName,
+          rounds: state.round,
+          vp_goal: state.vpGoal
+        }).then(function(r) {
+          if (r.error) log('History push error: ' + r.error.message);
+          else log('History pushed to Supabase');
+        }).catch(function(e) { log('History push exception: ' + e.message); });
+      }
     });
-    // Also log a summary row to the cross-game bg_game_log (for the front-page stats panel)
-    logToBgGameLog(winnerName);
   } else {
     clearPhotoCache();
   }
@@ -4854,40 +4962,6 @@ function endGame(winnerName) {
 
 // Write a summary row to bg_game_log so the Board Game Assistant front page
 // can render global stats across all games. Best-effort — silent on failure.
-function logToBgGameLog(winnerName) {
-  if (!supabase) return;
-  try {
-    var durMin = null;
-    if (state.startTime && state.endTime) {
-      var diffMs = new Date(state.endTime) - new Date(state.startTime);
-      var paused = state.pausedDurationMs || 0;
-      durMin = Math.max(0, Math.round((diffMs - paused) / 60000));
-    }
-    var playerSummary = state.players.map(function(p) {
-      return { name: p.name, faction: p.faction, color: p.color, vp: p.vp };
-    });
-    var row = {
-      game_type: 'ti4',
-      played_at: state.endTime || new Date().toISOString(),
-      duration_min: durMin,
-      player_count: state.players.length,
-      players: playerSummary,
-      winner: winnerName,
-      data: {
-        rounds: state.round,
-        vpGoal: state.vpGoal,
-        features: state.features || null
-      }
-    };
-    supabase.from('bg_game_log').insert(row).then(function(r) {
-      if (r.error) log('bg_game_log write error: ' + r.error.message);
-      else log('bg_game_log row inserted');
-    });
-  } catch (e) {
-    log('bg_game_log exception: ' + (e && e.message));
-  }
-}
-
 function logEvent(type, playerIdx, name, vp) {
   if (!state.started || state.ended) return;
   if (!state.roundLog) state.roundLog = [];
@@ -5329,8 +5403,17 @@ window.tempAutoColor = tempAutoColor;
 
 function newGame() {
   if (!isAdmin) return;
-  if (!confirm('Start a new game?\n\nIf a game is in progress, it will be ended and saved to history.')) return;
-  
+  showInfoModal({
+    icon: '🎮',
+    title: 'New Game?',
+    message: 'Start a new game?<br>If a game is in progress, it will be ended and saved to history.',
+    confirmLabel: 'Start New Game',
+    cancelLabel: 'Cancel',
+    onConfirm: doNewGame
+  });
+}
+
+function doNewGame() {
   // If there's an in-progress game that hasn't ended, end it first (save to history)
   if (state.started && !state.ended) {
     var sorted = state.players.slice().sort(function(a,b) { return b.vp - a.vp; });
@@ -5341,7 +5424,7 @@ function newGame() {
     if (state.round > 2) {
       // Save to history with all data
       loadAllPhotoCache().then(function(photos) {
-        dbSet('history', {
+        var historyEntry = {
           playedAt: new Date().toISOString(),
           startTime: state.startTime,
           endTime: state.endTime,
@@ -5352,11 +5435,26 @@ function newGame() {
           players: state.players.map(function(p) { return {name: p.name, faction: p.faction, vp: p.vp, color: p.color}; }),
           winner: winnerName,
           rounds: state.round,
-          vpGoal: state.vpGoal
-        }).then(function() {
+          vpGoal: state.vpGoal,
+          roomCode: roomCode
+        };
+        dbSet('history', historyEntry).then(function() {
           clearPhotoCache();
           startFreshGame();
         });
+        if (supabase) {
+          supabase.from('ti4_history').insert({
+            room_code: roomCode,
+            played_at: historyEntry.playedAt,
+            state: historyEntry,
+            players: historyEntry.players,
+            winner: winnerName,
+            rounds: state.round,
+            vp_goal: state.vpGoal
+          }).then(function(r) {
+            if (r.error) log('History push error: ' + r.error.message);
+          }).catch(function(){});
+        }
       });
       return;
     }
@@ -5406,8 +5504,28 @@ function removeTech(name) {
 }
 
 function deleteHistory(id) {
-  if (!confirm('Delete this game?')) return;
-  dbDelete('history', id).then(renderHistory);
+  showInfoModal({
+    icon: '🗑',
+    title: 'Delete Entry?',
+    message: 'Permanently delete this game from history?',
+    confirmLabel: 'Delete',
+    cancelLabel: 'Cancel',
+    onConfirm: function() {
+      var idStr = String(id);
+      if (idStr.indexOf('sb-') === 0) {
+        // Supabase entry — delete by Supabase row id
+        var sbId = parseInt(idStr.substring(3), 10);
+        if (supabase && !isNaN(sbId)) {
+          supabase.from('ti4_history').delete().eq('id', sbId).then(function() { renderHistory(); });
+        }
+      } else {
+        // Local IndexedDB entry — id is numeric
+        var num = parseInt(idStr, 10);
+        if (!isNaN(num)) dbDelete('history', num).then(renderHistory);
+        else renderHistory();
+      }
+    }
+  });
 }
 
 // Expose to onclick handlers
@@ -5776,7 +5894,7 @@ if ('serviceWorker' in navigator) {
 // =============================================================================
 function showHowTo() {
   var h = '<div style="text-align:center;margin-bottom:12px"><div class="gold" style="font-size:18px">📖 How To Use</div></div>';
-  h += '<div style="font-size:12px;line-height:1.5;max-height:65vh;overflow-y:auto;padding-right:4px">';
+  h += '<div style="font-size:13px;line-height:1.55;max-height:75vh;overflow-y:auto;padding-right:6px">';
   
   // Starting a game
   h += '<div style="font-size:11px;letter-spacing:.15em;color:var(--gold);text-transform:uppercase;margin-top:6px;margin-bottom:6px;border-bottom:1px solid var(--border);padding-bottom:3px">Starting a Game (Admin)</div>';
@@ -5902,6 +6020,7 @@ function showHowTo() {
   
   var modal = document.getElementById('modal');
   modal.classList.add('modal-center');
+  modal.classList.add('modal-wide');
   modal.innerHTML = h;
   modal.classList.add('open');
   document.getElementById('modal-overlay').classList.add('open');

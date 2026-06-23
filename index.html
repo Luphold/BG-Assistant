@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v1.7.5 - history saves to Supabase ti4_history, reads from both sources -->
+<!-- Board Game Assistant v1.8 - stats derived from ti4_history (single source of truth) -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -497,7 +497,7 @@
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v1.7.5</div>
+      <div class="version">v1.8.0</div>
     </div>
     
   </div>
@@ -802,7 +802,7 @@
         // Now optimistically try a connection but don't fail-on-error
         btn.textContent = 'Validating...';
         return loadSupabase(url, key).then(function(c) {
-          return c.from('bg_game_log').select('id').limit(1).catch(function(){return null;});
+          return c.from('ti4_history').select('id').limit(1).catch(function(){return null;});
         }).catch(function() { return null; });
       }).then(function() {
         closeSettings();
@@ -973,6 +973,42 @@
     }
     
     // ===== Init: load credentials, fetch stats, auto-open settings if missing =====
+    // Stats queries — each game's history table contributes rows. To add a new game later
+    // (e.g. catan_history), add an entry to this list.
+    var STATS_SOURCES = [
+      { gameType: 'ti4', table: 'ti4_history' }
+      // Future: { gameType: 'catan', table: 'catan_history' },
+      // Future: { gameType: 'smallworld', table: 'smallworld_history' }
+    ];
+    
+    function fetchStatsFromAllGames(client) {
+      // Query every per-game history table in parallel, tag each row with its game_type,
+      // and merge into a single sorted list (newest first).
+      return Promise.all(STATS_SOURCES.map(function(src) {
+        return client.from(src.table).select('played_at, winner, players, rounds, vp_goal').order('played_at', { ascending: false }).limit(200).then(function(r) {
+          if (r.error) {
+            // Table missing is OK — that game isn't set up yet; skip silently
+            return [];
+          }
+          return (r.data || []).map(function(row) {
+            return {
+              game_type: src.gameType,
+              played_at: row.played_at,
+              winner: row.winner,
+              players: row.players,
+              rounds: row.rounds,
+              vp_goal: row.vp_goal
+            };
+          });
+        }).catch(function() { return []; });
+      })).then(function(perGame) {
+        var merged = [];
+        perGame.forEach(function(rows) { merged = merged.concat(rows); });
+        merged.sort(function(a, b) { return new Date(b.played_at) - new Date(a.played_at); });
+        return merged;
+      });
+    }
+    
     function initStats() {
       Promise.all([dbGet('settings', 'url'), dbGet('settings', 'key')]).then(function(results) {
         var url = results[0] && results[0].v;
@@ -988,16 +1024,10 @@
         }
         loadSupabase(url, key).then(function(client) {
           supabaseClient = client;
-          supabaseClient.from('bg_game_log').select('*').order('played_at', { ascending: false }).limit(200).then(function(r) {
-            if (r.error) {
-              if (r.error.message && r.error.message.indexOf('bg_game_log') >= 0) {
-                document.getElementById('stats-panel').innerHTML = '<div class="no-supabase">Stats table not found. Please run the latest <code>ti4/supabase-setup.sql</code> in your Supabase project.</div>';
-              } else {
-                document.getElementById('stats-panel').innerHTML = '<div class="stats-empty">Could not load stats: ' + escapeHtml(r.error.message || 'unknown error') + '</div>';
-              }
-              return;
-            }
-            renderStatsFromRows(r.data || []);
+          fetchStatsFromAllGames(client).then(function(rows) {
+            renderStatsFromRows(rows);
+          }).catch(function(e) {
+            document.getElementById('stats-panel').innerHTML = '<div class="stats-empty">Could not load stats: ' + escapeHtml(e && e.message ? e.message : 'unknown error') + '</div>';
           });
         }).catch(function(e) {
           document.getElementById('stats-panel').innerHTML = '<div class="stats-empty">Could not connect to Supabase: ' + escapeHtml(e && e.message ? e.message : 'unknown error') + '</div>';
@@ -1036,12 +1066,12 @@
           return;
         }
         return loadSupabase(url, key).then(function(client) {
-          return client.from('bg_game_log').select('id').limit(1);
+          return client.from('ti4_history').select('id').limit(1);
         }).then(function(r) {
           if (r.error) {
             var m = r.error.message || 'unknown error';
-            if (m.toLowerCase().indexOf('bg_game_log') >= 0 || m.toLowerCase().indexOf('not exist') >= 0) {
-              setSupaStatus('error', 'Table missing', 'Supabase reachable, but bg_game_log table missing — run supabase-setup.sql');
+            if (m.toLowerCase().indexOf('ti4_history') >= 0 || m.toLowerCase().indexOf('not exist') >= 0) {
+              setSupaStatus('error', 'Table missing', 'Supabase reachable, but ti4_history table missing — run supabase-setup.sql');
             } else {
               setSupaStatus('error', 'Error', 'Supabase error: ' + m);
             }
