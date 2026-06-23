@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.148 -->
+<!-- TI4 Tracker 2.149 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -351,7 +351,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.148';
+var VERSION = '2.149';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -4918,45 +4918,49 @@ function doEndGame(winnerName) {
   // Save to history only after at least 2 completed rounds (i.e. on round 3 or later)
   log('doEndGame: round=' + state.round + ', will save to history: ' + (state.round > 2));
   if (state.round > 2) {
-    // Load photos from cache and bundle into history
-    loadAllPhotoCache().then(function(photos) {
-      var historyEntry = {
-        playedAt: new Date().toISOString(),
-        startTime: state.startTime,
-        endTime: state.endTime,
-        roundTimestamps: state.roundTimestamps || [],
-        roundLog: state.roundLog || [],
-        strategies: state.strategies || {},
-        roundPhotos: photos,
-        players: state.players.map(function(p) { return {name: p.name, faction: p.faction, vp: p.vp, color: p.color}; }),
+    // Build the cloud entry FIRST (without photos) — independent of IndexedDB
+    var baseEntry = {
+      playedAt: new Date().toISOString(),
+      startTime: state.startTime,
+      endTime: state.endTime,
+      roundTimestamps: state.roundTimestamps || [],
+      roundLog: state.roundLog || [],
+      strategies: state.strategies || {},
+      players: state.players.map(function(p) { return {name: p.name, faction: p.faction, vp: p.vp, color: p.color}; }),
+      winner: winnerName,
+      rounds: state.round,
+      vpGoal: state.vpGoal,
+      roomCode: roomCode
+    };
+    
+    // Fire Supabase save IMMEDIATELY (cloud doesn't need photos) — doesn't depend on IndexedDB
+    if (supabase) {
+      log('Inserting into ti4_history…');
+      supabase.from('ti4_history').insert({
+        room_code: roomCode,
+        played_at: baseEntry.playedAt,
+        state: baseEntry,
+        players: baseEntry.players,
         winner: winnerName,
         rounds: state.round,
-        vpGoal: state.vpGoal,
-        roomCode: roomCode
-      };
-      // Local save (IndexedDB) — keeps the photos
-      dbSet('history', historyEntry).then(function() {
-        log('History saved to IndexedDB');
+        vp_goal: state.vpGoal
+      }).then(function(r) {
+        if (r.error) log('History push error: ' + r.error.message);
+        else log('History pushed to Supabase');
+      }).catch(function(e) { log('History push exception: ' + (e && e.message)); });
+    } else {
+      log('No supabase client — skipping cloud save');
+    }
+    
+    // Local save: attempt photo load with a 3-second timeout; save with whatever photos we have
+    var photoPromise = loadAllPhotoCache();
+    var timeoutPromise = new Promise(function(resolve) { setTimeout(function() { resolve({}); }, 3000); });
+    Promise.race([photoPromise, timeoutPromise]).then(function(photos) {
+      var localEntry = Object.assign({}, baseEntry, { roundPhotos: photos || {} });
+      dbSet('history', localEntry).then(function(ok) {
+        log('History local save ' + (ok ? 'OK' : 'failed'));
         clearPhotoCache();
-      }).catch(function(e) { log('History IndexedDB save failed: ' + e.message); });
-      // Also save to Supabase ti4_history so it survives even when IndexedDB is flaky.
-      // Strip roundPhotos before sending — they can be large base64 blobs and cause failures.
-      if (supabase) {
-        var cloudEntry = Object.assign({}, historyEntry);
-        delete cloudEntry.roundPhotos;
-        supabase.from('ti4_history').insert({
-          room_code: roomCode,
-          played_at: historyEntry.playedAt,
-          state: cloudEntry,
-          players: historyEntry.players,
-          winner: winnerName,
-          rounds: state.round,
-          vp_goal: state.vpGoal
-        }).then(function(r) {
-          if (r.error) log('History push error: ' + r.error.message);
-          else log('History pushed to Supabase');
-        }).catch(function(e) { log('History push exception: ' + e.message); });
-      }
+      }).catch(function(e) { log('History IndexedDB save exception: ' + (e && e.message)); });
     });
   } else {
     clearPhotoCache();
