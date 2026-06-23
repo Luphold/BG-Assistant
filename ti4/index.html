@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.152 -->
+<!-- TI4 Tracker 2.153 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -351,7 +351,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.152';
+var VERSION = '2.153';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -3105,14 +3105,22 @@ function renderHistory() {
   ]).then(function(results) {
     var local = results[0] || [];
     var cloud = results[1] || [];
-    // Merge: prefer cloud entries over local ones with the same playedAt
+    // Merge: prefer cloud entries over local ones with the same playedAt.
+    // Use second-precision timestamps so near-duplicate inserts (within the same second)
+    // collapse to a single entry, since they refer to the same game.
+    function dedupeKey(e) {
+      if (!e.playedAt) return Math.random().toString();
+      return e.playedAt.substring(0, 19); // strip milliseconds and timezone
+    }
     var byKey = {};
     cloud.forEach(function(e) {
-      if (e.playedAt) byKey[e.playedAt] = e;
+      var k = dedupeKey(e);
+      if (!byKey[k]) byKey[k] = e;
     });
     local.forEach(function(e) {
       e._source = e._source || 'local';
-      if (e.playedAt && !byKey[e.playedAt]) byKey[e.playedAt] = e;
+      var k = dedupeKey(e);
+      if (!byKey[k]) byKey[k] = e;
     });
     var entries = Object.keys(byKey).map(function(k) { return byKey[k]; })
       .sort(function(a, b) { return new Date(b.playedAt) - new Date(a.playedAt); });
@@ -5045,10 +5053,11 @@ function doEndGame(winnerName) {
         clearPhotoCache();
       }).catch(function(e) { log('History IndexedDB save exception: ' + (e && e.message)); });
       
-      // Cloud save with photos included
+      // Cloud save with photos included — upsert by room_code to avoid duplicates
+      // (if end-game is run twice for the same game, the second call updates instead of inserts)
       if (supabase) {
-        log('Inserting into ti4_history…');
-        supabase.from('ti4_history').insert({
+        log('Saving to ti4_history for room ' + roomCode + '…');
+        var payload = {
           room_code: roomCode,
           played_at: fullEntry.playedAt,
           state: fullEntry,
@@ -5056,12 +5065,28 @@ function doEndGame(winnerName) {
           winner: winnerName,
           rounds: state.round,
           vp_goal: state.vpGoal
-        }).then(function(r) {
-          if (r.error) { log('History push error: ' + r.error.message); return; }
-          log('History pushed to Supabase');
-          // Cleanup: strip photos from games beyond the 3 most recent
-          pruneOldHistoryPhotos();
-        }).catch(function(e) { log('History push exception: ' + (e && e.message)); });
+        };
+        // First check if a row already exists for this room
+        supabase.from('ti4_history').select('id').eq('room_code', roomCode).limit(1).then(function(check) {
+          if (check.error) { log('History pre-check error: ' + check.error.message); return; }
+          if (check.data && check.data.length > 0) {
+            // Already exists — UPDATE it instead of inserting a duplicate
+            var existingId = check.data[0].id;
+            log('Existing row ' + existingId + ' found for room ' + roomCode + ' — updating');
+            supabase.from('ti4_history').update(payload).eq('id', existingId).then(function(r) {
+              if (r.error) { log('History update error: ' + r.error.message); return; }
+              log('History updated on Supabase');
+              pruneOldHistoryPhotos();
+            }).catch(function(e) { log('History update exception: ' + (e && e.message)); });
+          } else {
+            // No row yet — INSERT
+            supabase.from('ti4_history').insert(payload).then(function(r) {
+              if (r.error) { log('History push error: ' + r.error.message); return; }
+              log('History pushed to Supabase');
+              pruneOldHistoryPhotos();
+            }).catch(function(e) { log('History push exception: ' + (e && e.message)); });
+          }
+        }).catch(function(e) { log('History pre-check exception: ' + (e && e.message)); });
       } else {
         log('No supabase client — skipping cloud save');
       }
