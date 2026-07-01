@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Board Game Assistant v2.0.10 - Yatzy: stats handles null-total rows for legacy imports -->
+<!-- Board Game Assistant v2.0.12 - TI4: added missing prereqs for Bioplasmosis and L4 Disruptors -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -462,13 +462,14 @@
           </div>
         </div>
         
-        <!-- Yatzy -->
-        <div class="game-card" data-game="yatzy">
-          <div class="game-emoji">🎲</div>
-          <div class="game-title">Yatzy</div>
-          <div class="game-desc">Swedish scorecard · 15 categories · player stats</div>
+        <!-- Catan (placeholder) -->
+        <div class="game-card placeholder" data-game="catan">
+          <div class="game-emoji">🐑</div>
+          <div class="game-title">Catan</div>
+          <div class="game-desc">Resource tracker · longest road · largest army · auto-totals</div>
           <div class="game-actions">
-            <a href="yatzy/">ScoreCard</a>
+            <a class="disabled">Companion</a>
+            <a class="disabled">Setup Guide</a>
           </div>
         </div>
         
@@ -496,7 +497,7 @@
     
     <div class="footer">
       Board Game Assistant
-      <div class="version">v2.0.10</div>
+      <div class="version">v2.0.12</div>
     </div>
     
   </div>
@@ -902,7 +903,7 @@
         }
       });
       
-      var gameTypeLabel = { ti4: 'TI4', yatzy: 'Yatzy', smallworld: 'Small World' };
+      var gameTypeLabel = { ti4: 'TI4', catan: 'Catan', smallworld: 'Small World' };
       var gameBreakdown = Object.keys(byGame).map(function(k) {
         return { type: k, count: byGame[k] };
       }).sort(function(a, b) { return b.count - a.count; });
@@ -974,48 +975,31 @@
     // ===== Init: load credentials, fetch stats, auto-open settings if missing =====
     // Stats queries — each game's history table contributes rows. To add a new game later
     // (e.g. catan_history), add an entry to this list.
-    // Each per-game history table contributes rows to the front-page Global Stats panel.
-    // 'columns' is the SELECT list; 'normalize' maps a row to the unified stats shape.
     var STATS_SOURCES = [
-      {
-        gameType: 'ti4',
-        table: 'ti4_history',
-        columns: 'played_at, winner, players, rounds, vp_goal',
-        normalize: function(row) {
-          return {
-            game_type: 'ti4',
-            played_at: row.played_at,
-            winner: row.winner,
-            players: row.players,
-            rounds: row.rounds,
-            vp_goal: row.vp_goal
-          };
-        }
-      },
-      {
-        gameType: 'yatzy',
-        table: 'yatzy_history',
-        columns: 'played_at, winner, players, is_draw, max_total, min_total',
-        normalize: function(row) {
-          return {
-            game_type: 'yatzy',
-            played_at: row.played_at,
-            winner: row.winner,
-            players: row.players,
-            is_draw: row.is_draw,
-            max_total: row.max_total,
-            min_total: row.min_total
-          };
-        }
-      }
-      // Future: { gameType: 'smallworld', table: 'smallworld_history', ... }
+      { gameType: 'ti4', table: 'ti4_history' }
+      // Future: { gameType: 'catan', table: 'catan_history' },
+      // Future: { gameType: 'smallworld', table: 'smallworld_history' }
     ];
     
     function fetchStatsFromAllGames(client) {
+      // Query every per-game history table in parallel, tag each row with its game_type,
+      // and merge into a single sorted list (newest first).
       return Promise.all(STATS_SOURCES.map(function(src) {
-        return client.from(src.table).select(src.columns).order('played_at', { ascending: false }).limit(200).then(function(r) {
-          if (r.error) return [];
-          return (r.data || []).map(src.normalize);
+        return client.from(src.table).select('played_at, winner, players, rounds, vp_goal').order('played_at', { ascending: false }).limit(200).then(function(r) {
+          if (r.error) {
+            // Table missing is OK — that game isn't set up yet; skip silently
+            return [];
+          }
+          return (r.data || []).map(function(row) {
+            return {
+              game_type: src.gameType,
+              played_at: row.played_at,
+              winner: row.winner,
+              players: row.players,
+              rounds: row.rounds,
+              vp_goal: row.vp_goal
+            };
+          });
         }).catch(function() { return []; });
       })).then(function(perGame) {
         var merged = [];

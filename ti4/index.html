@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- TI4 Tracker 2.153 -->
+<!-- TI4 Tracker 2.155 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -351,7 +351,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 // TI4 Tracker - Single file, no module systems, no IIFEs
 // =============================================================================
 
-var VERSION = '2.153';
+var VERSION = '2.155';
 document.getElementById('version-display').textContent = 'v' + VERSION;
 
 // Debug logger - silent unless panel toggled open
@@ -696,8 +696,10 @@ const TECH_PREREQS = {
   "Space Dock II": ["y","y"],
   "War Sun": ["r","r","r","y"],
   // FACTION TECHS
+  "Bioplasmosis": ["g","g"],
   "Letani Warrior II": ["g","g"],
   "Non-Euclidean Shielding": ["r","r"],
+  "L4 Disruptors": ["y"],
   "Chaos Mapping": ["b"],
   "Floating Factory II": ["y","y"],
   "Magmus Reactor": ["r","r"],
@@ -1589,6 +1591,24 @@ const FACTION_DATA = {
     }
   }
 };
+
+// =============================================================================
+// Prereq icons (replaces colored dots) — uses images in images/tech_icons/
+// =============================================================================
+var PREREQ_ICON_FILES = {
+  y: 'images/tech_icons/cybernetic.png',
+  g: 'images/tech_icons/biotic.png',
+  b: 'images/tech_icons/propulsion.png',
+  r: 'images/tech_icons/warfare.png'
+};
+// Returns an <img> tag for the given color code and size in px.
+// Falls back to an empty span for unknown codes.
+function prereqIcon(c, size) {
+  var s = size || 12;
+  var src = PREREQ_ICON_FILES[c];
+  if (!src) return '<span style="display:inline-block;width:' + s + 'px;height:' + s + 'px"></span>';
+  return '<img src="' + src + '" alt="' + c + '" style="width:' + s + 'px;height:' + s + 'px;object-fit:contain;flex-shrink:0;display:inline-block;vertical-align:middle" draggable="false">';
+}
 
 // =============================================================================
 // State
@@ -2893,11 +2913,7 @@ function renderTechBox(techName, isResearched, currentPlayer) {
   var prereqs = TECH_PREREQS[techName] || [];
   var markersHtml = '';
   prereqs.forEach(function(c) {
-    var bg = c === 'y' ? '#d4ac0d' :
-             c === 'g' ? '#27ae60' :
-             c === 'b' ? '#2980b9' :
-             c === 'r' ? '#e74c3c' : '#888';
-    markersHtml += '<div style="width:12px;height:12px;background:' + bg + ';border:1px solid rgba(255,255,255,.3);border-radius:50%;flex-shrink:0"></div>';
+    markersHtml += prereqIcon(c, 14);
   });
   
   var safeName = techName.replace(/'/g, "\\'");
@@ -2972,13 +2988,9 @@ function openTechDetail(techName) {
   // Prereq markers (centered)
   var prereqs = TECH_PREREQS[techName] || [];
   if (prereqs.length) {
-    h += '<div style="display:flex;justify-content:center;gap:5px;margin-bottom:12px">';
+    h += '<div style="display:flex;justify-content:center;gap:6px;margin-bottom:12px">';
     prereqs.forEach(function(c) {
-      var bg = c === 'y' ? '#d4ac0d' :
-               c === 'g' ? '#27ae60' :
-               c === 'b' ? '#2980b9' :
-               c === 'r' ? '#e74c3c' : '#888';
-      h += '<div style="width:18px;height:18px;background:' + bg + ';border:1px solid rgba(255,255,255,.4);border-radius:50%"></div>';
+      h += prereqIcon(c, 22);
     });
     h += '</div>';
   }
@@ -3432,11 +3444,7 @@ function _renderFactionBody(name, d, h) {
           if (idx > 0) {
             prereqHtml += '<span style="color:var(--text-dim);font-size:11px;font-weight:600">&lt;-&gt;</span>';
           }
-          var bg = c === 'y' ? '#d4ac0d' :
-                   c === 'g' ? '#27ae60' :
-                   c === 'b' ? '#2980b9' :
-                   c === 'r' ? '#e74c3c' : '#888';
-          prereqHtml += '<span style="display:inline-block;width:12px;height:12px;background:' + bg + ';border:1px solid rgba(255,255,255,.3);border-radius:50%"></span>';
+          prereqHtml += prereqIcon(c, 14);
         });
         prereqHtml += '</span>';
       }
